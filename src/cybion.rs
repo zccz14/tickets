@@ -308,23 +308,22 @@ impl CybionClient {
         Self::parse(&text)
     }
 
-    /// `Ok(None)` means the machine is gone on Cybion's side.
+    /// `Ok(None)` means the machine is gone on Cybion's side. Cybion exposes the
+    /// collection (`GET /api/machines`), not a single-machine read, so the list
+    /// is filtered here.
     pub async fn read_machine(
         &self,
         bearer: &str,
         id: &str,
     ) -> Result<Option<MachineInfo>, String> {
-        let path = format!("/api/machines/{id}");
         let (status, text) = self
-            .browser_call(reqwest::Method::GET, &path, bearer, None)
+            .browser_call(reqwest::Method::GET, "/api/machines", bearer, None)
             .await?;
-        if status == 404 {
-            return Ok(None);
-        }
         if !(200..300).contains(&status) {
             return Err(Self::browser_error(status, &text));
         }
-        Self::parse(&text).map(Some)
+        let machines: Vec<MachineInfo> = Self::parse(&text)?;
+        Ok(machines.into_iter().find(|machine| machine.id == id))
     }
 
     pub async fn update_machine(

@@ -260,6 +260,9 @@ export function ProjectSettingsDialog({
               </div>
             )}
 
+            {resolver.isError ? (
+              <p className="text-xs text-destructive">{(resolver.error as Error).message}</p>
+            ) : null}
             {failure ? (
               <p className="text-xs text-destructive">{(failure as Error).message}</p>
             ) : null}

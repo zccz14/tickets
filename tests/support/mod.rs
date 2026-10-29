@@ -214,7 +214,7 @@ pub async fn start_mock_cybion() -> MockCybion {
         .route("/api/api-keys", post(create_api_key))
         .route("/api/api-keys/{id}", delete(delete_api_key))
         .route("/api/workers", get(list_workers))
-        .route("/api/machines", post(create_machine))
+        .route("/api/machines", get(list_machines).post(create_machine))
         .route(
             "/api/machines/{id}",
             get(read_machine)
@@ -605,4 +605,16 @@ async fn run_machine(
     } else {
         StatusCode::NOT_FOUND.into_response()
     }
+}
+
+async fn list_machines(State(state): State<Arc<MockState>>, headers: HeaderMap) -> Json<Value> {
+    state.calls.lock().unwrap().push(Call {
+        method: "GET".to_owned(),
+        path: "/api/machines".to_owned(),
+        bearer: bearer(&headers),
+        body: Value::Null,
+    });
+    Json(Value::Array(
+        state.machines.lock().unwrap().values().cloned().collect(),
+    ))
 }
