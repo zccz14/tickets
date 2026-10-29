@@ -188,3 +188,38 @@ async fn resolver_calls_need_a_browser_token() {
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
     assert!(error_message(&body).contains("Auth Mini"), "{body}");
 }
+
+#[tokio::test]
+async fn machine_status_comes_from_the_cybion_list() {
+    let env = Env::new().await;
+    let alice = env.app("alice").await;
+    connect(&env, &alice).await;
+    let project = alice.create_project("payments").await;
+    alice
+        .call_with(
+            Some(TOKEN),
+            "POST",
+            &format!("/api/projects/{project}/resolver"),
+            Some(json!({ "worker_id": "worker-1" })),
+        )
+        .await;
+
+    let (status, body) = alice
+        .call_with(
+            Some(TOKEN),
+            "GET",
+            &format!("/api/projects/{project}/resolver"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["machine"]["id"], "machine-0001");
+    assert_eq!(body["machine"]["worker_label"], "MacMini");
+    assert!(
+        env.mock
+            .calls_to("/api/machines")
+            .iter()
+            .any(|call| call.method == "GET"),
+        "状态必须从 GET /api/machines 读取"
+    );
+}

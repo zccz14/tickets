@@ -80,7 +80,7 @@ export const copy = {
     threadTokens: "{n} tokens",
     threadOwnerNote: "这个 Thread 由报障人的 Cybion 账号持有，运行在报障人的机器上。只有报障人能打开它。",
     resolverMissing: "这个项目还没有接入修复 Agent",
-    resolverMissingHint: "生成密钥，把命令贴到 Cybion 的终极机器页面，修复 Agent 就会持续监听并处理工单。",
+    resolverMissingHint: "选一台 Worker，系统会自动建好 Cybion 终极机器，不需要复制命令。",
     resolverThreadLabel: "修复 Agent 的 Thread",
     resolverConnect: "接入终极机器",
     resolverConnectHint:
@@ -219,7 +219,7 @@ export const copy = {
     threadTokens: "{n} tokens",
     threadOwnerNote: "This thread belongs to the reporter's Cybion account and runs on their machine. Only they can open it.",
     resolverMissing: "No resolver Agent connected",
-    resolverMissingHint: "Generate a key and paste the command into Cybion's Ultimate Machines page.",
+    resolverMissingHint: "Pick a Worker and Tickets creates the Cybion Ultimate Machine for you.",
     resolverThreadLabel: "Resolver thread",
     resolverConnect: "Connect Ultimate Machine",
     resolverConnectHint:
