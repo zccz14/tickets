@@ -150,7 +150,6 @@ pub struct CreateGrant {
 #[derive(Serialize)]
 pub struct GrantView {
     pub user_id: String,
-    pub display_name: Option<String>,
     pub created_at: i64,
 }
 

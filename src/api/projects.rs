@@ -330,11 +330,7 @@ pub async fn list_grants(
         return Err(AppError::forbidden("只有项目所有者可以管理成员"));
     }
     let rows = sqlx::query(
-        "SELECT g.user_id,u.display_name,g.created_at
-         FROM project_grants g
-         LEFT JOIN users u ON u.id=g.user_id
-         WHERE g.project_id=?
-         ORDER BY g.created_at ASC",
+        "SELECT user_id,created_at FROM project_grants WHERE project_id=? ORDER BY created_at ASC",
     )
     .bind(&id)
     .fetch_all(&state.db)
@@ -343,8 +339,7 @@ pub async fn list_grants(
         .iter()
         .map(|row| GrantView {
             user_id: row.get(0),
-            display_name: row.get(1),
-            created_at: row.get(2),
+            created_at: row.get(1),
         })
         .collect();
     Ok(Json(json!({ "grants": grants })))

@@ -53,7 +53,7 @@ erDiagram
 | `users` | Auth Mini 主体缓存 | `id`、`display_name`（来自 Linkit 的 `X-Linkit-Username`） |
 | `cybion_accounts` | 每人一把加密的 Cybion Key | `api_key_cipher`、`key_hint` |
 | `projects` | 队列、所有者与可见性 | `visibility`（`public`/`private`）、`ticket_counter`、`resolver_key_hash`、`resolver_thread_url` |
-| `project_grants` | 私有项目的授权成员 | `(project_id, user_id)` 主键 |
+| `project_grants` | 私有项目的授权成员 | `(project_id, user_id)` 主键；成员从 Linkit 目录挑选，只存 `user_id` |
 | `tickets` | 工单与两侧水位 | `status`、`last_reporter_at`、`last_resolver_at`、`reporter_thread_*` |
 | `comments` | 时间线 | `kind`（`comment`/`evidence`/`system`）、`author_kind` |
 
