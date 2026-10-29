@@ -8,7 +8,7 @@ set -euo pipefail
 
 domain="${1:-tickets.ntnl.io}"
 caddy_version="2.11.7"
-caddy_sha256="a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7"
+caddy_sha512="a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7"
 app_user="tickets"
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -16,7 +16,7 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-dnf install -y ca-certificates curl tar gzip shadow-utils
+dnf install -y ca-certificates tar gzip shadow-utils
 
 # The service account owns the SQLite database and the AES key beside it.
 id -u "$app_user" >/dev/null 2>&1 || useradd \
@@ -27,14 +27,14 @@ id -u "$app_user" >/dev/null 2>&1 || useradd \
 install -d -o "$app_user" -g "$app_user" -m 0700 /opt/tickets/data
 
 # Caddy is not in the AL2023 repositories, so install the pinned static build
-# and verify it against the checksum published with the release.
+# and verify it against the SHA-512 published with the release.
 if ! command -v caddy >/dev/null 2>&1; then
   temporary_dir="$(mktemp -d)"
   trap 'rm -rf "$temporary_dir"' EXIT
   curl --fail --location --retry 5 --retry-all-errors \
     --output "$temporary_dir/caddy.tar.gz" \
     "https://github.com/caddyserver/caddy/releases/download/v${caddy_version}/caddy_${caddy_version}_linux_amd64.tar.gz"
-  printf '%s  %s\n' "$caddy_sha256" "$temporary_dir/caddy.tar.gz" | sha256sum --check -
+  printf '%s  %s\n' "$caddy_sha512" "$temporary_dir/caddy.tar.gz" | sha512sum --check -
   tar -xzf "$temporary_dir/caddy.tar.gz" -C "$temporary_dir" caddy
   install -m 0755 "$temporary_dir/caddy" /usr/local/bin/caddy
 fi
