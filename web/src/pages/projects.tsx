@@ -144,7 +144,7 @@ export function ProjectsPage() {
             }}
           >
             <div className="space-y-1.5">
-              <Label htmlFor="project-name">{t("projectsTitle")}</Label>
+              <Label htmlFor="project-name">{t("projectNameLabel")}</Label>
               <Input
                 id="project-name"
                 autoFocus
@@ -154,7 +154,7 @@ export function ProjectsPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="project-description">{t("ticketBodyLabel")}</Label>
+              <Label htmlFor="project-description">{t("projectDescriptionLabel")}</Label>
               <Textarea
                 id="project-description"
                 rows={3}

@@ -87,11 +87,11 @@ export function ProjectSettingsDialog({
 
         <div className="space-y-5">
           <div className="space-y-1.5">
-            <Label htmlFor="settings-name">{t("projectsTitle")}</Label>
+            <Label htmlFor="settings-name">{t("projectNameLabel")}</Label>
             <Input id="settings-name" value={name} onChange={(event) => setName(event.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="settings-description">{t("ticketBodyLabel")}</Label>
+            <Label htmlFor="settings-description">{t("projectDescriptionLabel")}</Label>
             <Textarea
               id="settings-description"
               rows={3}
