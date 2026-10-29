@@ -37,7 +37,6 @@ export type Project = {
 
 export type ProjectGrant = {
   user_id: string
-  display_name: string | null
   created_at: number
 }
 

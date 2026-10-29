@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { LinkitUserInfo, LinkitUserPicker } from "linkit-react-components"
 import { KeyRoundIcon, PauseIcon, PlayIcon, UnplugIcon, UserPlusIcon, XIcon } from "lucide-react"
 import { useState } from "react"
 
@@ -108,6 +109,13 @@ export function ProjectSettingsDialog({
     onSuccess: refresh,
   })
 
+  // The picker searches the whole Linkit directory, so it can also produce the
+  // owner or someone already on the list; both are rejected before the request.
+  const memberIsOwner = Boolean(memberId) && memberId === me.data?.id
+  const memberAlreadyGranted =
+    grants.data?.grants.some((grant) => grant.user_id === memberId) ?? false
+  const memberInvalid = memberIsOwner || memberAlreadyGranted
+
   const connectMachine = useMutation({
     mutationFn: () =>
       request<ResolverView>(`/api/projects/${project.id}/resolver`, {
@@ -205,17 +213,8 @@ export function ProjectSettingsDialog({
                     key={grant.user_id}
                     className="flex items-center gap-2 rounded-lg border border-border/60 bg-background/60 px-2.5 py-1.5"
                   >
-                    <span className="min-w-0 flex-1 truncate text-sm">
-                      {grant.display_name ? (
-                        <>
-                          {grant.display_name}
-                          <span className="ml-2 font-mono text-[10px] text-muted-foreground">
-                            {grant.user_id}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="font-mono text-xs">{grant.user_id}</span>
-                      )}
+                    <span className="min-w-0 flex-1">
+                      <LinkitUserInfo userId={grant.user_id} compact />
                     </span>
                     <Button
                       size="sm"
@@ -233,23 +232,31 @@ export function ProjectSettingsDialog({
               <p className="text-xs text-muted-foreground">{t("projectMembersEmpty")}</p>
             )}
             <div className="flex flex-wrap items-end gap-2">
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <Input
+              <div className="min-w-0 flex-1">
+                <LinkitUserPicker
+                  lang={lang}
+                  label={t("projectMemberSearchLabel")}
                   value={memberId}
-                  onChange={(event) => setMemberId(event.target.value)}
-                  placeholder={t("projectMemberPlaceholder")}
+                  onValueChange={(userId) => setMemberId(userId)}
                 />
               </div>
               <Button
                 size="sm"
                 variant="outline"
-                disabled={!memberId.trim() || addMember.isPending}
+                disabled={!memberId.trim() || addMember.isPending || memberInvalid}
                 onClick={() => addMember.mutate()}
               >
                 <UserPlusIcon />
                 {t("actionAddMember")}
               </Button>
             </div>
+            <p className="text-xs text-muted-foreground">{t("projectMemberSearchHint")}</p>
+            {memberIsOwner ? (
+              <p className="text-xs text-muted-foreground">{t("projectMemberSelf")}</p>
+            ) : null}
+            {memberAlreadyGranted ? (
+              <p className="text-xs text-muted-foreground">{t("projectMemberAlready")}</p>
+            ) : null}
             {addMember.isError ? (
               <p className="text-xs text-destructive">{(addMember.error as Error).message}</p>
             ) : null}
