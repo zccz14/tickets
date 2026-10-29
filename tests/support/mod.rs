@@ -458,8 +458,13 @@ async fn create_api_key(
         bearer: bearer(&headers),
         body: body.clone(),
     });
+    // Same shape as Cybion: the key fields are flattened next to `secret`.
     Json(json!({
-        "key": { "id": "key-0001", "label": body["label"], "prefix": "cyb_mock", "created_at": 1 },
+        "id": "key-0001",
+        "label": body["label"],
+        "prefix": "cyb_mock",
+        "created_at": 1,
+        "last_used_at": null,
         "secret": MOCK_API_KEY
     }))
     .into_response()
