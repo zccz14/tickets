@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { EmptyState, PageHeader, StatusBadge } from "@/components/bits"
+import { EmptyState, PageHeader, StatusBadge, VisibilityBadge } from "@/components/bits"
 import { ProjectSettingsDialog } from "@/components/project-settings"
 import type { Project, Ticket, TicketSummary } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
@@ -83,7 +83,16 @@ export function ProjectPage() {
             {t("navProjects")}
           </button>
         }
-        title={project.data?.name ?? t("loading")}
+        title={
+          project.data ? (
+            <span className="flex flex-wrap items-center gap-2">
+              {project.data.name}
+              <VisibilityBadge visibility={project.data.visibility} />
+            </span>
+          ) : (
+            t("loading")
+          )
+        }
         description={project.data?.description || undefined}
         actions={
           <>

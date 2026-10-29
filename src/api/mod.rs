@@ -52,6 +52,14 @@ pub fn browser_routes() -> Router<AppState> {
         )
         .route("/api/projects/{id}/resolver/run", post(resolver::run))
         .route(
+            "/api/projects/{id}/grants",
+            get(projects::list_grants).post(projects::add_grant),
+        )
+        .route(
+            "/api/projects/{id}/grants/{user_id}",
+            axum::routing::delete(projects::remove_grant),
+        )
+        .route(
             "/api/projects/{id}/resolver-key",
             post(projects::create_resolver_key).delete(projects::revoke_resolver_key),
         )

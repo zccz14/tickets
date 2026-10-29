@@ -1,9 +1,35 @@
 import { LinkitUserInfo } from "linkit-react-components"
+import { GlobeIcon, LockIcon } from "lucide-react"
 import type { ReactNode } from "react"
 
 import { useCopy } from "@/lib/session"
 import { cn } from "@/lib/utils"
-import type { Comment } from "@/lib/api"
+import type { Comment, ProjectVisibility } from "@/lib/api"
+
+export function VisibilityBadge({
+  visibility,
+  className,
+}: {
+  visibility: ProjectVisibility
+  className?: string
+}) {
+  const { t } = useCopy()
+  const Icon = visibility === "private" ? LockIcon : GlobeIcon
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+        visibility === "private"
+          ? "border-border bg-muted/60 text-muted-foreground"
+          : "border-primary/25 bg-primary/8 text-primary",
+        className,
+      )}
+    >
+      <Icon className="size-2.5" />
+      {visibility === "private" ? t("projectVisibilityPrivate") : t("projectVisibilityPublic")}
+    </span>
+  )
+}
 
 export function StatusBadge({ status }: { status: "draft" | "open" | "closed" }) {
   const { t } = useCopy()

@@ -322,9 +322,18 @@ impl App {
         self.call("PATCH", uri, Some(body)).await
     }
 
+    /// Most tests exercise ticket flows, not visibility, so they create an
+    /// explicitly public project. Permission tests call `create_project_with`.
     pub async fn create_project(&self, name: &str) -> String {
+        self.create_project_with(name, "public").await
+    }
+
+    pub async fn create_project_with(&self, name: &str, visibility: &str) -> String {
         let (status, project) = self
-            .post("/api/projects", Some(json!({ "name": name })))
+            .post(
+                "/api/projects",
+                Some(json!({ "name": name, "visibility": visibility })),
+            )
             .await;
         assert_eq!(status, StatusCode::OK, "创建项目失败: {project}");
         project["id"].as_str().expect("项目 id").to_owned()

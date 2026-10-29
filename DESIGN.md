@@ -42,6 +42,8 @@ flowchart TB
 erDiagram
     users ||--o{ projects : owns
     users ||--o| cybion_accounts : connects
+    projects ||--o{ project_grants : grants
+    users ||--o{ project_grants : receives
     projects ||--o{ tickets : contains
     tickets ||--o{ comments : has
 ```
@@ -50,7 +52,8 @@ erDiagram
 | --- | --- | --- |
 | `users` | Auth Mini 主体缓存 | `id`、`display_name`（来自 Linkit 的 `X-Linkit-Username`） |
 | `cybion_accounts` | 每人一把加密的 Cybion Key | `api_key_cipher`、`key_hint` |
-| `projects` | 队列与所有者 | `ticket_counter`、`resolver_key_hash`、`resolver_thread_url` |
+| `projects` | 队列、所有者与可见性 | `visibility`（`public`/`private`）、`ticket_counter`、`resolver_key_hash`、`resolver_thread_url` |
+| `project_grants` | 私有项目的授权成员 | `(project_id, user_id)` 主键 |
 | `tickets` | 工单与两侧水位 | `status`、`last_reporter_at`、`last_resolver_at`、`reporter_thread_*` |
 | `comments` | 时间线 | `kind`（`comment`/`evidence`/`system`）、`author_kind` |
 
@@ -71,6 +74,16 @@ erDiagram
 `AuthGate` 懒加载 Auth Mini 的 JWKS：第一次需要校验时才去取，取到后缓存在进程内。这样 Auth Mini 短暂不可用不会阻止进程启动或发布，只是登录请求会收到 503。
 
 `--dev-user` 把整条校验替换成固定用户，并在启动时打 WARN。前端对应的 `DevSessionProvider` 被 `import.meta.env.DEV` 包住，生产构建里这段代码不可达。
+
+### 项目可见性
+
+`visibility` 与 `project_grants` 一起决定谁能看到一个项目：
+
+- `projects::require_view` 是唯一的闸门：owner 恒通过，`public` 恒通过，`private` 还要在 `project_grants` 里有行。所有项目与工单的浏览器接口（列表、详情、建单、评论、提交、关单、Thread）都先过这道闸门，隐藏的项目统一回 404 而不是 403，避免泄露存在性。
+- 列表查询把同一条规则写进 SQL：`visibility='public' OR owner_user_id=? OR EXISTS(project_grants …)`；`/api/me/tickets` 用同样的过滤，所以失去授权后连自己的旧工单也不再出现。
+- 授权管理（`/api/projects/{id}/grants`）先过 `require_view` 再过 owner 检查：公开项目上的非所有者得到 403，私有项目上的非成员得到 404。
+- Resolver 的 `owned_project` 也先过 `require_view`，但归属不变：修复密钥、终极机器与队列仍然只属于 owner，授权成员拿不到。
+- 迁移：`visibility` 用 `ALTER TABLE … DEFAULT 'public'` 加到存量库，因此老项目保持所有人可见；新库的建表默认值是 `private`，应用层插入时总是显式绑定。
 
 ### Agent 令牌
 

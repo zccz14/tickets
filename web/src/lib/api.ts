@@ -15,6 +15,8 @@ export type Me = {
   cybion_last_error: string | null
 }
 
+export type ProjectVisibility = "public" | "private"
+
 export type Project = {
   id: string
   name: string
@@ -29,6 +31,14 @@ export type Project = {
   resolver_thread_url: string | null
   resolver_machine_id: string | null
   is_owner: boolean
+  visibility: ProjectVisibility
+  is_member: boolean
+}
+
+export type ProjectGrant = {
+  user_id: string
+  display_name: string | null
+  created_at: number
 }
 
 export type CybionWorker = {
