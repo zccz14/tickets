@@ -68,7 +68,9 @@ export function TicketPage() {
   const reopen = useMutation({ mutationFn: () => act("reopen"), onSuccess: invalidate })
   const createThread = useMutation({
     mutationFn: () => act("thread"),
-    onSuccess: invalidate,
+    // Refresh even on failure: the server records the reason on the Ticket and
+    // the sidebar shows it there.
+    onSettled: invalidate,
   })
 
   usePageTitle(
@@ -263,10 +265,11 @@ export function TicketPage() {
             title={t("ticketSidebarReporterAgent")}
             thread={threadInfo}
             loading={thread.isFetching}
-            canCreate={data.is_reporter && Boolean(threadInfo.error)}
+            canCreate={data.is_reporter}
+            isDraft={data.status === "draft"}
             creating={createThread.isPending}
             onCreate={() => createThread.mutate()}
-            connectedHint={t("threadConnectHint")}
+            connectHint={t("threadConnectHint")}
           />
 
           <section className="rounded-xl border border-border/70 bg-card p-4">
@@ -313,17 +316,19 @@ function ThreadCard({
   thread,
   loading,
   canCreate,
+  isDraft,
   creating,
   onCreate,
-  connectedHint,
+  connectHint,
 }: {
   title: string
   thread: ThreadInfo
   loading: boolean
   canCreate: boolean
+  isDraft: boolean
   creating: boolean
   onCreate: () => void
-  connectedHint: string
+  connectHint: string
 }) {
   const { t } = useCopy()
   return (
@@ -371,15 +376,20 @@ function ThreadCard({
       ) : (
         <div className="mt-3 space-y-2">
           <p className="text-xs text-muted-foreground">{t("threadMissing")}</p>
-          <p className="text-[11px] text-muted-foreground">{t("threadMissingHint")}</p>
-          {thread.error ? <p className="text-[11px] text-muted-foreground">{thread.error}</p> : null}
+          <p className="text-[11px] text-muted-foreground">
+            {canCreate
+              ? t(isDraft ? "threadMissingDraftHint" : "threadMissingOpenHint")
+              : t("threadMissingHint")}
+          </p>
+          {thread.error ? <p className="text-[11px] text-destructive">{thread.error}</p> : null}
           {canCreate ? (
-            <Button size="sm" variant="outline" disabled={creating} onClick={onCreate}>
-              {t("actionCreateThread")}
-            </Button>
-          ) : (
-            <p className="text-[11px] text-muted-foreground">{connectedHint}</p>
-          )}
+            <>
+              <Button size="sm" variant="outline" disabled={creating} onClick={onCreate}>
+                {t("actionCreateThread")}
+              </Button>
+              <p className="text-[11px] text-muted-foreground">{connectHint}</p>
+            </>
+          ) : null}
         </div>
       )}
     </section>

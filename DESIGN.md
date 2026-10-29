@@ -124,7 +124,7 @@ Cybion 的 `/v1/threads` 按 API Key 的 owner 隔离，服务端拿一把公共
 
 失败分类直接面向用户：401 提示重新登录（受众缺失或令牌过期），403 提示权限不足，其他状态带上截断后的响应体。
 
-Thread 创建发生在事务提交之后的后台任务里，因此提交工单永远不会等 Cybion。失败写进 `tickets.reporter_thread_error`，工单照常进入队列；报障人可以在工单页重试。
+Thread 创建发生在事务提交之后的后台任务里，因此提交工单永远不会等 Cybion。草稿不自动建 Thread，报障人在工单页点「创建调查 Thread」时才走同一条后台流程。失败写进 `tickets.reporter_thread_error`，工单照常进入队列；报障人可以在工单页重试。
 
 ## 队列与终极机器
 
