@@ -1,4 +1,4 @@
-import { LinkitUserDisplay, useLinkit } from "linkit-react-components"
+import { LinkitUserInfo } from "linkit-react-components"
 import type { ReactNode } from "react"
 
 import { useCopy } from "@/lib/session"
@@ -66,15 +66,13 @@ export function AuthorName({
   name: string | null
 }) {
   const { t } = useCopy()
-  const linkit = useLinkit()
   if (kind === "reporter_agent") return <span className="font-medium">报障 Agent</span>
   if (kind === "resolver_agent") return <span className="font-medium">修复 Agent</span>
   if (kind === "system") return <span className="font-medium">{name ?? "系统"}</span>
-  // Linkit renders the avatar and username once a Linkit session exists; the
-  // server-side display name is the fallback that never shows a raw user id.
-  if (userId && linkit.myUserId) {
-    return <LinkitUserDisplay userId={userId} unknownLabel={name ?? t("ticketReporter")} />
-  }
+  // Linkit owns how a person is shown: avatar, username and the profile popup.
+  // The server-side display name only stands in when there is no user behind
+  // the comment at all.
+  if (userId) return <LinkitUserInfo userId={userId} compact />
   return <span className="font-medium">{name ?? t("ticketReporter")}</span>
 }
 

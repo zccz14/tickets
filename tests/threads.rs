@@ -269,3 +269,80 @@ async fn only_the_reporter_sees_the_thread_link() {
     );
     assert!(broken["url"].is_string());
 }
+
+/// Polls the mock until the Thread receives an input containing `needle`.
+async fn wait_for_input(env: &Env, thread_id: &str, needle: &str) -> Call {
+    let path = format!("/v1/threads/{thread_id}/inputs");
+    for _ in 0..200 {
+        if let Some(call) = env.mock.calls_to(&path).into_iter().find(|call| {
+            call.body["input"]
+                .as_str()
+                .is_some_and(|input| input.contains(needle))
+        }) {
+            return call;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("Thread {thread_id} 没有收到包含「{needle}」的输入");
+}
+
+#[tokio::test]
+async fn a_comment_wakes_the_reporter_thread() {
+    let env = Env::new().await;
+    let alice = env.app("alice").await;
+    connect(&alice, ALICE_KEY).await;
+
+    let project = alice.create_project("payments").await;
+    let ticket = alice
+        .create_ticket(&project, "支付回调 502", "线上回调偶发 502", true)
+        .await;
+    let id = ticket["id"].as_str().expect("工单 id").to_owned();
+    let ready = wait_for_thread(&alice, &id).await;
+    let thread_id = ready["reporter_thread"]["thread_id"]
+        .as_str()
+        .expect("thread id")
+        .to_owned();
+
+    alice.comment(&id, "补充：只在凌晨批量对账时出现").await;
+
+    let nudge = wait_for_input(&env, &thread_id, "只在凌晨批量对账时出现").await;
+    let text = nudge.body["input"].as_str().unwrap();
+    assert!(text.contains("报障人"), "评论唤醒没有标明角色: {text}");
+    assert!(
+        text.contains(&format!("#{}", ready["number"])),
+        "缺少工单号: {text}"
+    );
+    assert_eq!(
+        nudge.bearer.as_deref(),
+        Some(ALICE_KEY),
+        "唤醒必须用报障人自己的 Key"
+    );
+}
+
+#[tokio::test]
+async fn the_briefing_carries_the_project_description() {
+    let env = Env::new().await;
+    let alice = env.app("alice").await;
+    connect(&alice, ALICE_KEY).await;
+
+    let project = alice.create_project("payments").await;
+    let (status, updated) = alice
+        .patch(
+            &format!("/api/projects/{project}"),
+            json!({ "description": "支付网关与对账回调，夜里跑批" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+
+    let ticket = alice
+        .create_ticket(&project, "支付回调 502", "线上回调偶发 502", true)
+        .await;
+    let id = ticket["id"].as_str().expect("工单 id").to_owned();
+    wait_for_thread(&alice, &id).await;
+
+    let briefing = env.mock.briefing_for(&id);
+    assert!(
+        briefing.contains("支付网关与对账回调，夜里跑批"),
+        "简报缺少项目描述: {briefing}"
+    );
+}

@@ -60,6 +60,8 @@ erDiagram
 2. **水位在写评论时一起更新**。`insert_comment` 按作者类型决定抬 `last_reporter_at` 还是 `last_resolver_at`，与插入评论同一条语句完成，队列判据因此永远和评论一致。
 3. **索引围绕三个查询**：项目内状态列表（`project_id, status, updated_at DESC`）、我的工单（`reporter_user_id, updated_at DESC`）、队列（`project_id, status, last_resolver_at, last_reporter_at`）。
 
+用户评论还会顺手推进报障侧的 Thread：`comment` handler 先落库再 `tokio::spawn` 一个 `progress_reporter_thread`，由它确保 Thread 存在、用报障人的 Key 投一条带评论内容的 input。评论的 HTTP 响应不等 Cybion；推进失败只写 `reporter_thread_error`，评论本身已经成功。
+
 数据库连接：WAL、`synchronous=NORMAL`、`foreign_keys=ON`、`busy_timeout=10s`、连接池 8。建表用 `CREATE TABLE IF NOT EXISTS`；当前没有迁移框架，改列需要手写迁移脚本。
 
 ## 认证与授权
@@ -142,6 +144,7 @@ flowchart TB
 - **TanStack Query** 管请求状态；`createRequest` 统一注入 `Authorization` 与 `X-Linkit-Username`，并在 token 临近过期时刷新。
 - **i18n** 是拍平的常量字典，`CopyKey` 由字典推导；`translate` 支持 `{n}` 占位符，缺键在编译期报错。
 - **主题**是 Claude 暖橘：纸白底、墨色字、陶土橘主色；Reporter 与 Resolver 两条泳道分别用陶土橘与松绿，评论卡片与时间线标签沿用同一组变量。
+- **用户身份统一交给 Linkit**：评论作者、报障人、设置页身份都用 `LinkitUserInfo`（头像 + 用户名 + 资料卡），服务端的 `display_name` 只在没有对应用户时兜底。
 
 ## 部署
 

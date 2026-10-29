@@ -447,6 +447,29 @@ pub async fn comment(
         body,
     )
     .await?;
+    // The reporter's Thread owns the investigation, so every comment is a new
+    // lead for it: wake it in the background instead of making the commenter
+    // wait on Cybion.
+    let project = projects::load_project(&state, &ticket.project_id).await?;
+    let role = if ticket.reporter_user_id == user.id {
+        "报障人"
+    } else if project.owner_user_id == user.id {
+        "项目所有者"
+    } else {
+        "其他成员"
+    };
+    let nudge = crate::prompt::comment_nudge(&crate::prompt::CommentNudge {
+        ticket_number: ticket.number,
+        author: user.display_name.as_deref().unwrap_or("匿名用户"),
+        role,
+        body,
+        closed: ticket.status == "closed",
+    });
+    // Someone else's comment cannot conjure a Thread on the reporter's behalf:
+    // only the reporter's own comment may create a missing one.
+    if ticket.reporter_thread_id.is_some() || ticket.reporter_user_id == user.id {
+        crate::spawn_reporter_progress(state.clone(), ticket.id.clone(), nudge);
+    }
     read(State(state), Extension(user), Path(id)).await
 }
 
@@ -707,6 +730,7 @@ pub async fn ensure_reporter_thread(state: &AppState, ticket_id: &str) -> AppRes
         cybion_base: state.cybion.base().to_owned(),
         ticket_number: ticket.number,
         project_name: &project.name,
+        project_description: &project.description,
         title: &ticket.title,
         body: &ticket.body,
         reporter: &reporter,
@@ -724,6 +748,42 @@ pub async fn ensure_reporter_thread(state: &AppState, ticket_id: &str) -> AppRes
         .await?;
     }
     Ok(())
+}
+
+/// Pushes a new message into the reporter's Thread, creating the Thread first
+/// when the Ticket never got one. Failures land on the Ticket so the UI can
+/// show them instead of losing the message silently.
+pub async fn progress_reporter_thread(
+    state: &AppState,
+    ticket_id: &str,
+    nudge: &str,
+) -> AppResult<()> {
+    ensure_reporter_thread(state, ticket_id).await?;
+    let ticket = load_ticket(state, ticket_id).await?;
+    let Some(thread_id) = ticket.reporter_thread_id.clone() else {
+        return Ok(());
+    };
+    let Some(key) = account::reporter_key(state, &ticket.reporter_user_id).await? else {
+        set_thread_error(
+            state,
+            ticket_id,
+            Some("报障人没有连接 Cybion，评论无法推进现场调查 Thread"),
+        )
+        .await?;
+        return Ok(());
+    };
+    match state.cybion.post_input(&key, &thread_id, nudge).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            set_thread_error(
+                state,
+                ticket_id,
+                Some(&format!("评论已记录，但推进现场调查 Thread 失败：{error}")),
+            )
+            .await?;
+            Err(AppError::unavailable(error))
+        }
+    }
 }
 
 async fn set_thread_error(state: &AppState, ticket_id: &str, error: Option<&str>) -> AppResult<()> {

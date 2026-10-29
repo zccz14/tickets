@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CheckCircle2Icon, LinkIcon, UnplugIcon } from "lucide-react"
+import { LinkitUserInfo } from "linkit-react-components"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -126,7 +127,9 @@ export function SettingsPage() {
           </div>
           <div>
             <dt>{t("settingsLinkit")}</dt>
-            <dd className="mt-0.5 text-xs">{data?.display_name ?? "—"}</dd>
+            <dd className="mt-0.5 text-xs">
+              {data ? <LinkitUserInfo userId={data.id} compact /> : "—"}
+            </dd>
           </div>
         </dl>
         <p className="text-xs text-muted-foreground">{t("settingsLinkedAccountBody")}</p>
