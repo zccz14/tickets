@@ -14,9 +14,16 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { EmptyState, PageHeader } from "@/components/bits"
-import type { Project } from "@/lib/api"
+import { EmptyState, PageHeader, VisibilityBadge } from "@/components/bits"
+import type { Project, ProjectVisibility } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
 import { useCopy, useSession } from "@/lib/session"
 
@@ -28,6 +35,7 @@ export function ProjectsPage() {
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
+  const [visibility, setVisibility] = useState<ProjectVisibility>("private")
 
   const projects = useQuery({
     queryKey: ["projects"],
@@ -38,13 +46,14 @@ export function ProjectsPage() {
     mutationFn: () =>
       request<Project>("/api/projects", {
         method: "POST",
-        body: JSON.stringify({ name, description }),
+        body: JSON.stringify({ name, description, visibility }),
       }),
     onSuccess: (project) => {
       void queryClient.invalidateQueries({ queryKey: ["projects"] })
       setCreating(false)
       setName("")
       setDescription("")
+      setVisibility("private")
       navigate(`/projects/${project.id}`)
     },
   })
@@ -94,9 +103,18 @@ export function ProjectsPage() {
                   <FolderIcon className="size-4" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-foreground">{project.name}</p>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="truncate font-medium text-foreground">{project.name}</p>
+                    <VisibilityBadge visibility={project.visibility} />
+                  </div>
                   <p className="truncate text-xs text-muted-foreground">
                     {project.owner_name ?? project.owner_user_id.slice(0, 8)}
+                    {project.is_member ? (
+                      <>
+                        <span className="mx-1.5 opacity-40">·</span>
+                        {t("projectMemberBadge")}
+                      </>
+                    ) : null}
                     <span className="mx-1.5 opacity-40">·</span>
                     {relativeTime(lang, project.updated_at)}
                   </p>
@@ -162,6 +180,30 @@ export function ProjectsPage() {
                 onChange={(event) => setDescription(event.target.value)}
                 placeholder="这个项目负责什么，谁来修。"
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("projectVisibilityLabel")}</Label>
+              <Select
+                value={visibility}
+                onValueChange={(value) => setVisibility(value as ProjectVisibility)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue>
+                    {visibility === "private"
+                      ? t("projectVisibilityPrivate")
+                      : t("projectVisibilityPublic")}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="private">{t("projectVisibilityPrivate")}</SelectItem>
+                  <SelectItem value="public">{t("projectVisibilityPublic")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {visibility === "private"
+                  ? t("projectVisibilityPrivateHint")
+                  : t("projectVisibilityPublicHint")}
+              </p>
             </div>
             {create.isError ? (
               <p className="text-sm text-destructive">{(create.error as Error).message}</p>

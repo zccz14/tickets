@@ -33,6 +33,12 @@ pub struct ProjectView {
     /// The Cybion Ultimate Machine that watches this project's queue.
     pub resolver_machine_id: Option<String>,
     pub is_owner: bool,
+    /// `public` or `private`. Private projects are visible only to the owner
+    /// and the users listed in `project_grants`.
+    pub visibility: String,
+    /// True when the viewer is on the project's grant list (the owner gets
+    /// `is_owner` instead).
+    pub is_member: bool,
 }
 
 #[derive(Serialize)]
@@ -116,6 +122,10 @@ pub struct CreateProject {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// Missing means private: a new project is nobody else's business until its
+    /// owner says otherwise.
+    #[serde(default)]
+    pub visibility: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -126,7 +136,22 @@ pub struct UpdateProject {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
+    pub visibility: Option<String>,
+    #[serde(default)]
     pub resolver_thread_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateGrant {
+    pub user_id: String,
+}
+
+#[derive(Serialize)]
+pub struct GrantView {
+    pub user_id: String,
+    pub display_name: Option<String>,
+    pub created_at: i64,
 }
 
 #[derive(Deserialize)]

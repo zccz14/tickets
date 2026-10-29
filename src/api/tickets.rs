@@ -209,7 +209,8 @@ pub async fn list(
     Path(project_id): Path<String>,
     Query(filter): Query<StatusFilter>,
 ) -> AppResult<Json<Vec<TicketSummary>>> {
-    projects::load_project(&state, &project_id).await?;
+    let project = projects::load_project(&state, &project_id).await?;
+    projects::require_view(&state, &project, &user.id).await?;
     let status = filter.status.unwrap_or_else(|| "open".to_owned());
     let mut sql = String::from(SUMMARY_SELECT);
     let mut args: Vec<String> = vec![project_id.clone()];
@@ -242,8 +243,14 @@ pub async fn my_tickets(
     Extension(user): Extension<CurrentUser>,
 ) -> AppResult<Json<Vec<TicketSummary>>> {
     let rows = sqlx::query(&format!(
-        "{SUMMARY_SELECT} WHERE t.reporter_user_id=? ORDER BY t.updated_at DESC LIMIT 200"
+        "{SUMMARY_SELECT}
+         WHERE t.reporter_user_id=?
+           AND (p.visibility='public' OR p.owner_user_id=?
+                OR EXISTS(SELECT 1 FROM project_grants g WHERE g.project_id=p.id AND g.user_id=?))
+         ORDER BY t.updated_at DESC LIMIT 200"
     ))
+    .bind(&user.id)
+    .bind(&user.id)
     .bind(&user.id)
     .fetch_all(&state.db)
     .await?;
@@ -257,6 +264,7 @@ pub async fn create(
     Json(input): Json<CreateTicket>,
 ) -> AppResult<Json<TicketView>> {
     let project = projects::load_project(&state, &project_id).await?;
+    projects::require_view(&state, &project, &user.id).await?;
     let title = input.title.trim();
     if title.is_empty() {
         return Err(AppError::bad_request("工单标题不能为空"));
@@ -313,6 +321,7 @@ pub async fn read(
 ) -> AppResult<Json<TicketView>> {
     let ticket = load_ticket(&state, &id).await?;
     let project = projects::load_project(&state, &ticket.project_id).await?;
+    projects::require_view(&state, &project, &user.id).await?;
     if ticket.status == "draft" && ticket.reporter_user_id != user.id {
         return Err(AppError::not_found("工单不存在"));
     }
@@ -382,6 +391,8 @@ pub async fn update(
     Json(input): Json<UpdateTicket>,
 ) -> AppResult<Json<TicketView>> {
     let ticket = load_ticket(&state, &id).await?;
+    let project = projects::load_project(&state, &ticket.project_id).await?;
+    projects::require_view(&state, &project, &user.id).await?;
     if ticket.reporter_user_id != user.id {
         return Err(AppError::forbidden("只有报障人可以修改工单内容"));
     }
@@ -427,6 +438,8 @@ pub async fn comment(
     Json(input): Json<CreateComment>,
 ) -> AppResult<Json<TicketView>> {
     let ticket = load_ticket(&state, &id).await?;
+    let project = projects::load_project(&state, &ticket.project_id).await?;
+    projects::require_view(&state, &project, &user.id).await?;
     if ticket.status == "draft" && ticket.reporter_user_id != user.id {
         return Err(AppError::not_found("工单不存在"));
     }
@@ -450,7 +463,6 @@ pub async fn comment(
     // The reporter's Thread owns the investigation, so every comment is a new
     // lead for it: wake it in the background instead of making the commenter
     // wait on Cybion.
-    let project = projects::load_project(&state, &ticket.project_id).await?;
     let role = if ticket.reporter_user_id == user.id {
         "报障人"
     } else if project.owner_user_id == user.id {
@@ -479,6 +491,8 @@ pub async fn submit(
     Path(id): Path<String>,
 ) -> AppResult<Json<TicketView>> {
     let ticket = load_ticket(&state, &id).await?;
+    let project = projects::load_project(&state, &ticket.project_id).await?;
+    projects::require_view(&state, &project, &user.id).await?;
     if ticket.reporter_user_id != user.id {
         return Err(AppError::forbidden("只有报障人可以提交工单"));
     }
@@ -518,6 +532,7 @@ pub async fn close(
 ) -> AppResult<Json<TicketView>> {
     let ticket = load_ticket(&state, &id).await?;
     let project = projects::load_project(&state, &ticket.project_id).await?;
+    projects::require_view(&state, &project, &user.id).await?;
     let allowed = ticket.reporter_user_id == user.id || project.owner_user_id == user.id;
     if !allowed {
         return Err(AppError::forbidden("只有报障人或项目所有者可以关闭工单"));
@@ -574,6 +589,7 @@ pub async fn reopen(
 ) -> AppResult<Json<TicketView>> {
     let ticket = load_ticket(&state, &id).await?;
     let project = projects::load_project(&state, &ticket.project_id).await?;
+    projects::require_view(&state, &project, &user.id).await?;
     let allowed = ticket.reporter_user_id == user.id || project.owner_user_id == user.id;
     if !allowed {
         return Err(AppError::forbidden(
@@ -611,6 +627,8 @@ pub async fn read_thread(
     Path(id): Path<String>,
 ) -> AppResult<Json<ThreadView>> {
     let ticket = load_ticket(&state, &id).await?;
+    let project = projects::load_project(&state, &ticket.project_id).await?;
+    projects::require_view(&state, &project, &user.id).await?;
     if ticket.status == "draft" && ticket.reporter_user_id != user.id {
         return Err(AppError::not_found("工单不存在"));
     }
@@ -659,6 +677,8 @@ pub async fn retry_thread(
     Path(id): Path<String>,
 ) -> AppResult<Json<ThreadView>> {
     let ticket = load_ticket(&state, &id).await?;
+    let project = projects::load_project(&state, &ticket.project_id).await?;
+    projects::require_view(&state, &project, &user.id).await?;
     if ticket.reporter_user_id != user.id {
         return Err(AppError::forbidden("只有报障人可以创建现场调查 Thread"));
     }

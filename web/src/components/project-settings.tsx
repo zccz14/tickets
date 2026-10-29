@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { KeyRoundIcon, PauseIcon, PlayIcon, UnplugIcon } from "lucide-react"
+import { KeyRoundIcon, PauseIcon, PlayIcon, UnplugIcon, UserPlusIcon, XIcon } from "lucide-react"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -13,8 +13,15 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import type { CybionWorker, Machine, Me, Project } from "@/lib/api"
+import type { CybionWorker, Machine, Me, Project, ProjectGrant, ProjectVisibility } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
 import { useCopy, useSession } from "@/lib/session"
 
@@ -35,6 +42,8 @@ export function ProjectSettingsDialog({
   const [name, setName] = useState(project.name)
   const [description, setDescription] = useState(project.description)
   const [workerId, setWorkerId] = useState("")
+  const [visibility, setVisibility] = useState<ProjectVisibility>(project.visibility)
+  const [memberId, setMemberId] = useState("")
 
   const me = useQuery({
     queryKey: ["me"],
@@ -47,6 +56,12 @@ export function ProjectSettingsDialog({
     queryFn: () => request<{ workers: CybionWorker[] }>("/api/cybion/workers"),
     enabled: open && connected,
   })
+  const grants = useQuery({
+    queryKey: ["project-grants", project.id],
+    queryFn: () =>
+      request<{ grants: ProjectGrant[] }>(`/api/projects/${project.id}/grants`),
+    enabled: open && project.is_owner,
+  })
   const resolver = useQuery({
     queryKey: ["project-resolver", project.id],
     queryFn: () => request<ResolverView>(`/api/projects/${project.id}/resolver`),
@@ -58,18 +73,39 @@ export function ProjectSettingsDialog({
     void queryClient.invalidateQueries({ queryKey: ["project", project.id] })
     void queryClient.invalidateQueries({ queryKey: ["projects"] })
     void queryClient.invalidateQueries({ queryKey: ["project-resolver", project.id] })
+    void queryClient.invalidateQueries({ queryKey: ["project-grants", project.id] })
   }
 
   const save = useMutation({
     mutationFn: () =>
       request<Project>(`/api/projects/${project.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ name, description }),
+        body: JSON.stringify({ name, description, visibility }),
       }),
     onSuccess: () => {
       refresh()
       onOpenChange(false)
     },
+  })
+
+  const addMember = useMutation({
+    mutationFn: () =>
+      request<unknown>(`/api/projects/${project.id}/grants`, {
+        method: "POST",
+        body: JSON.stringify({ user_id: memberId.trim() }),
+      }),
+    onSuccess: () => {
+      setMemberId("")
+      refresh()
+    },
+  })
+
+  const removeMember = useMutation({
+    mutationFn: (userId: string) =>
+      request<unknown>(`/api/projects/${project.id}/grants/${userId}`, {
+        method: "DELETE",
+      }),
+    onSuccess: refresh,
   })
 
   const connectMachine = useMutation({
@@ -128,6 +164,101 @@ export function ProjectSettingsDialog({
               value={description}
               onChange={(event) => setDescription(event.target.value)}
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>{t("projectVisibilityLabel")}</Label>
+            <Select
+              value={visibility}
+              onValueChange={(value) => setVisibility(value as ProjectVisibility)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue>
+                  {visibility === "private"
+                    ? t("projectVisibilityPrivate")
+                    : t("projectVisibilityPublic")}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="private">{t("projectVisibilityPrivate")}</SelectItem>
+                <SelectItem value="public">{t("projectVisibilityPublic")}</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {visibility === "private"
+                ? t("projectVisibilityPrivateHint")
+                : t("projectVisibilityPublicHint")}
+            </p>
+          </div>
+
+          <div className="space-y-3 rounded-xl border border-border/70 bg-secondary/30 p-4">
+            <div>
+              <p className="text-sm font-medium">{t("projectMembersLabel")}</p>
+              <p className="text-xs text-muted-foreground">{t("projectMembersHint")}</p>
+            </div>
+            {grants.isPending ? (
+              <p className="text-xs text-muted-foreground">…</p>
+            ) : grants.data?.grants.length ? (
+              <ul className="space-y-1.5">
+                {grants.data.grants.map((grant) => (
+                  <li
+                    key={grant.user_id}
+                    className="flex items-center gap-2 rounded-lg border border-border/60 bg-background/60 px-2.5 py-1.5"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                      {grant.display_name ? (
+                        <>
+                          {grant.display_name}
+                          <span className="ml-2 font-mono text-[10px] text-muted-foreground">
+                            {grant.user_id}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="font-mono text-xs">{grant.user_id}</span>
+                      )}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={removeMember.isPending}
+                      onClick={() => removeMember.mutate(grant.user_id)}
+                      aria-label={t("actionRemoveMember")}
+                    >
+                      <XIcon />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-muted-foreground">{t("projectMembersEmpty")}</p>
+            )}
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <Input
+                  value={memberId}
+                  onChange={(event) => setMemberId(event.target.value)}
+                  placeholder={t("projectMemberPlaceholder")}
+                />
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!memberId.trim() || addMember.isPending}
+                onClick={() => addMember.mutate()}
+              >
+                <UserPlusIcon />
+                {t("actionAddMember")}
+              </Button>
+            </div>
+            {addMember.isError ? (
+              <p className="text-xs text-destructive">{(addMember.error as Error).message}</p>
+            ) : null}
+            {removeMember.isError ? (
+              <p className="text-xs text-destructive">{(removeMember.error as Error).message}</p>
+            ) : null}
+            {grants.isError ? (
+              <p className="text-xs text-destructive">{(grants.error as Error).message}</p>
+            ) : null}
           </div>
 
           <div className="space-y-3 rounded-xl border border-border/70 bg-secondary/30 p-4">

@@ -48,6 +48,9 @@ fn browser_token(user: &CurrentUser) -> AppResult<&str> {
 
 async fn owned_project(state: &AppState, user: &CurrentUser, id: &str) -> AppResult<ProjectRow> {
     let project = load_project(state, id).await?;
+    // Hidden private projects answer 404 before the ownership check, so the
+    // error does not reveal that a project exists.
+    super::projects::require_view(state, &project, &user.id).await?;
     if project.owner_user_id != user.id {
         return Err(AppError::forbidden("只有项目所有者可以管理修复 Agent"));
     }
