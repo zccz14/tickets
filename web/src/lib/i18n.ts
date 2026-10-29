@@ -46,6 +46,8 @@ export const copy = {
     projectsEmptyHint: "创建一个项目，就可以开始收工单了。项目所有者可以接入修复 Agent。",
     projectOpenCount: "{n} 个待处理",
     projectTotalCount: "{n} 个工单",
+    projectNameLabel: "项目名称",
+    projectDescriptionLabel: "项目描述",
     projectOwner: "所有者",
     projectCreated: "创建于",
 
@@ -160,6 +162,8 @@ export const copy = {
     projectsEmptyHint: "Create a project to start collecting tickets. Its owner can connect a resolver Agent.",
     projectOpenCount: "{n} open",
     projectTotalCount: "{n} tickets",
+    projectNameLabel: "Project name",
+    projectDescriptionLabel: "Description",
     projectOwner: "Owner",
     projectCreated: "Created",
 
