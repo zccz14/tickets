@@ -1,6 +1,7 @@
 pub mod account;
 pub mod agent;
 pub mod projects;
+pub mod resolver;
 pub mod tickets;
 
 use axum::{
@@ -41,6 +42,15 @@ pub fn browser_routes() -> Router<AppState> {
             "/api/projects/{id}",
             get(projects::read).patch(projects::update),
         )
+        .route("/api/cybion/workers", get(resolver::workers))
+        .route(
+            "/api/projects/{id}/resolver",
+            get(resolver::read)
+                .post(resolver::connect)
+                .patch(resolver::update)
+                .delete(resolver::disconnect),
+        )
+        .route("/api/projects/{id}/resolver/run", post(resolver::run))
         .route(
             "/api/projects/{id}/resolver-key",
             post(projects::create_resolver_key).delete(projects::revoke_resolver_key),

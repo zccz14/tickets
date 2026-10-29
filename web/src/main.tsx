@@ -51,7 +51,11 @@ function Session({ meta, children }: { meta: Meta; children: ReactNode }) {
   return (
     <AuthMiniProvider
       authMiniBaseUrl={meta.auth_base_url}
-      audiences={[window.location.hostname, new URL(meta.linkit_base_url).hostname]}
+      audiences={[
+        window.location.hostname,
+        new URL(meta.linkit_base_url).hostname,
+        new URL(meta.cybion_base_url).hostname,
+      ]}
       autoRedirectToLogin={!DEV_USER}
     >
       <LinkitProvider linkitBaseUrl={meta.linkit_base_url} lang="zh-CN">

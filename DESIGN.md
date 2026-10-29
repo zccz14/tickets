@@ -101,7 +101,7 @@ flowchart LR
 
 Cybion 的 `/v1/threads` 按 API Key 的 owner 隔离，服务端拿一把公共 Key 建出来的 Thread 属于服务端而不是报障人，报障人既看不到也跑不了。因此：
 
-- 每个用户存一把自己的 Key（加密）；
+- 每个用户存一把自己的 Key（加密），Key 由服务端用用户的 Auth Mini 令牌调 Cybion `POST /api/api-keys` 铸出，界面不要求粘贴；
 - 建 Thread 时用**报障人的 Key**，Thread 的 owner、Worker、上下文都归报障人；
 - 读 Thread 状态同样用报障人的 Key，所以只有报障人能拿到链接，其他人只看到元信息。
 
@@ -114,19 +114,27 @@ Cybion 的 `/v1/threads` 按 API Key 的 owner 隔离，服务端拿一把公共
 | `read_thread` | `GET /v1/threads/{id}` | 实时读状态与上下文用量 |
 | `probe_key` | `GET /v1/threads/000…0` | 连接账号时验证 Key：401 才算无效 |
 
-失败分类直接面向用户：401 提示重新生成 Key，403 提示权限不足，其他状态带上截断后的响应体。
+浏览器 API 复用同一枚令牌：前端把 `cybion.ntnl.io` 加进 Auth Mini 的 `audiences`，服务端验完自己的受众后把原始 Bearer 转发给 Cybion，代表这个人执行操作。
+
+| 调用 | 路径 | 用途 |
+| --- | --- | --- |
+| `create_api_key` / `delete_api_key` | `/api/api-keys` | 连接账号时铸 Key，断开或换 Key 时吊销 |
+| `list_workers` | `/api/workers` | 接入机器时选 Worker |
+| `create_machine` / `read_machine` / `update_machine` / `delete_machine` / `run_machine` | `/api/machines` | 终极机器的接入、状态、暂停、立即运行与断开 |
+
+失败分类直接面向用户：401 提示重新登录（受众缺失或令牌过期），403 提示权限不足，其他状态带上截断后的响应体。
 
 Thread 创建发生在事务提交之后的后台任务里，因此提交工单永远不会等 Cybion。失败写进 `tickets.reporter_thread_error`，工单照常进入队列；报障人可以在工单页重试。
 
 ## 队列与终极机器
 
-检查命令由前端 `machine.ts` 生成，服务端只保存密钥哈希，不保存命令。命令做三件事：
+检查命令由服务端 `machine.rs` 生成（前端不再持有密钥，也不再展示命令），项目只保存密钥哈希与 `resolver_machine_id`。命令做三件事：
 
 1. 把密钥与 `ctl` 助手落到 `~/.tickets/`（目录 0700、密钥 0600）。之后所有请求都引用 `$K`，密钥不会出现在命令输出里，也就不会进入 Thread 的历史。
 2. `GET /api/agent/queue`；为空则退出 0，什么都不打印。
 3. 有工单则打印摘要并退出 1，让终极机器唤醒修复 Thread。
 
-`machine.ts` 对项目名做单引号转义，因此项目名里出现引号、`$()` 或反引号也不会破坏命令或触发命令替换；测试会真的执行生成的 bash 来验证这一点。
+`machine.rs` 对项目名做单引号转义，因此项目名里出现引号、`$()` 或反引号也不会破坏命令或触发命令替换；测试会把生成的脚本交给 `bash -n` 验证语法。
 
 ## 前端
 
@@ -180,7 +188,8 @@ flowchart LR
 | --- | --- |
 | Rust 单元 | AES-GCM 往返与错 Key、`secret.key` 权限与稳定性、令牌格式与哈希、摘要截断、作者类型 |
 | Rust 集成 | 真 Axum 路由 + 临时 SQLite + 进程内假 Cybion：草稿可见性、权限矩阵、并发编号、令牌越权、队列水位与排序、Thread 创建/失败/重试、Key 加密落库 |
-| 前端 | i18n 键与占位符完整性、相对时间、终极机器命令（`bash -n` + 用桩 `curl`/`jq` 实际执行，验证退出码、0600 密钥、项目名转义） |
+| 前端 | i18n 键与占位符完整性、相对时间、样式导入 |
+| 集成 | 真实路由 + 假 Cybion：铸 Key、建机器、暂停、断开、评论唤醒 Thread、简报带项目描述 |
 | CI | `pnpm run check`、`cargo fmt --check`、`cargo clippy -D warnings`、`cargo test`、脚本 `bash -n` |
 
 集成测试不 mock 数据库，也不 mock 路由：请求真的走中间件、真的写 SQLite，只有 Cybion 是假的——它是唯一的外部依赖。

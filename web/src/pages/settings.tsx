@@ -1,11 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CheckCircle2Icon, LinkIcon, UnplugIcon } from "lucide-react"
 import { LinkitUserInfo } from "linkit-react-components"
-import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { PageHeader } from "@/components/bits"
 import type { Me } from "@/lib/api"
 import { useCopy, useSession } from "@/lib/session"
@@ -14,7 +11,6 @@ export function SettingsPage() {
   const { request } = useSession()
   const { t } = useCopy()
   const queryClient = useQueryClient()
-  const [apiKey, setApiKey] = useState("")
 
   const me = useQuery({ queryKey: ["me"], queryFn: () => request<Me>("/api/me") })
 
@@ -22,12 +18,9 @@ export function SettingsPage() {
     mutationFn: () =>
       request<Me>("/api/account/cybion", {
         method: "PUT",
-        body: JSON.stringify({ api_key: apiKey }),
+        body: JSON.stringify({}),
       }),
-    onSuccess: () => {
-      setApiKey("")
-      void queryClient.invalidateQueries({ queryKey: ["me"] })
-    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["me"] }),
   })
   const disconnect = useMutation({
     mutationFn: () => request<unknown>("/api/account/cybion", { method: "DELETE" }),
@@ -74,47 +67,27 @@ export function SettingsPage() {
             {data.cybion_last_error ? (
               <p className="text-xs text-destructive">{data.cybion_last_error}</p>
             ) : null}
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={disconnect.isPending}
-                onClick={() => disconnect.mutate()}
-              >
-                <UnplugIcon />
-                {t("actionDisconnect")}
-              </Button>
-            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={disconnect.isPending}
+              onClick={() => disconnect.mutate()}
+            >
+              <UnplugIcon />
+              {t("actionDisconnect")}
+            </Button>
           </div>
         ) : (
-          <form
-            className="space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (apiKey.trim()) connect.mutate()
-            }}
-          >
-            <div className="space-y-1.5">
-              <Label htmlFor="cybion-key">{t("settingsKeyLabel")}</Label>
-              <Input
-                id="cybion-key"
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                placeholder={t("settingsKeyPlaceholder")}
-                className="font-mono text-xs"
-              />
-              <p className="text-xs text-muted-foreground">{t("settingsKeyHint")}</p>
-            </div>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">{t("settingsCybionAutoHint")}</p>
             {connect.isError ? (
               <p className="text-sm text-destructive">{(connect.error as Error).message}</p>
             ) : null}
-            <Button type="submit" disabled={!apiKey.trim() || connect.isPending}>
+            <Button disabled={connect.isPending} onClick={() => connect.mutate()}>
+              <LinkIcon />
               {t("actionConnect")}
             </Button>
-          </form>
+          </div>
         )}
       </section>
 

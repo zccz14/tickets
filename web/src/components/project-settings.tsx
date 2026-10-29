@@ -1,5 +1,5 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { KeyRoundIcon, RotateCcwIcon, Trash2Icon } from "lucide-react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { KeyRoundIcon, PauseIcon, PlayIcon, UnplugIcon } from "lucide-react"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -14,10 +14,11 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { CodeBlock, CopyButton } from "@/components/bits"
-import type { Project, ResolverKey } from "@/lib/api"
-import { resolverCommand } from "@/lib/machine"
+import type { CybionWorker, Machine, Me, Project } from "@/lib/api"
+import { relativeTime } from "@/lib/format"
 import { useCopy, useSession } from "@/lib/session"
+
+type ResolverView = { machine: Machine | null }
 
 export function ProjectSettingsDialog({
   project,
@@ -29,27 +30,41 @@ export function ProjectSettingsDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const { request } = useSession()
-  const { t } = useCopy()
+  const { t, lang } = useCopy()
   const queryClient = useQueryClient()
   const [name, setName] = useState(project.name)
   const [description, setDescription] = useState(project.description)
-  const [threadUrl, setThreadUrl] = useState(project.resolver_thread_url ?? "")
-  const [issued, setIssued] = useState<ResolverKey | null>(null)
+  const [workerId, setWorkerId] = useState("")
+
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: () => request<Me>("/api/me"),
+    enabled: open,
+  })
+  const connected = Boolean(me.data?.cybion_connected)
+  const workers = useQuery({
+    queryKey: ["cybion-workers"],
+    queryFn: () => request<{ workers: CybionWorker[] }>("/api/cybion/workers"),
+    enabled: open && connected,
+  })
+  const resolver = useQuery({
+    queryKey: ["project-resolver", project.id],
+    queryFn: () => request<ResolverView>(`/api/projects/${project.id}/resolver`),
+    enabled: open && project.is_owner && connected,
+  })
+  const machine = resolver.data?.machine ?? null
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["project", project.id] })
     void queryClient.invalidateQueries({ queryKey: ["projects"] })
+    void queryClient.invalidateQueries({ queryKey: ["project-resolver", project.id] })
   }
 
   const save = useMutation({
     mutationFn: () =>
       request<Project>(`/api/projects/${project.id}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          name,
-          description,
-          resolver_thread_url: threadUrl,
-        }),
+        body: JSON.stringify({ name, description }),
       }),
     onSuccess: () => {
       refresh()
@@ -57,25 +72,40 @@ export function ProjectSettingsDialog({
     },
   })
 
-  const issueKey = useMutation({
+  const connectMachine = useMutation({
     mutationFn: () =>
-      request<ResolverKey>(`/api/projects/${project.id}/resolver-key`, { method: "POST" }),
-    onSuccess: (key) => {
-      setIssued(key)
-      refresh()
-    },
+      request<ResolverView>(`/api/projects/${project.id}/resolver`, {
+        method: "POST",
+        body: JSON.stringify({ worker_id: workerId, interval_seconds: 120 }),
+      }),
+    onSuccess: refresh,
   })
 
-  const revokeKey = useMutation({
-    mutationFn: () =>
-      request<unknown>(`/api/projects/${project.id}/resolver-key`, { method: "DELETE" }),
-    onSuccess: () => {
-      setIssued(null)
-      refresh()
-    },
+  const toggleMachine = useMutation({
+    mutationFn: (enabled: boolean) =>
+      request<ResolverView>(`/api/projects/${project.id}/resolver`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled }),
+      }),
+    onSuccess: refresh,
   })
 
-  const base = window.location.origin
+  const runNow = useMutation({
+    mutationFn: () =>
+      request<unknown>(`/api/projects/${project.id}/resolver/run`, { method: "POST" }),
+  })
+
+  const disconnectMachine = useMutation({
+    mutationFn: () =>
+      request<unknown>(`/api/projects/${project.id}/resolver`, { method: "DELETE" }),
+    onSuccess: refresh,
+  })
+
+  const available = workers.data?.workers ?? []
+  const selected =
+    workerId || available.find((worker) => worker.status === "online")?.id || available[0]?.id || ""
+  const failure =
+    connectMachine.error ?? toggleMachine.error ?? runNow.error ?? disconnectMachine.error
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -108,75 +138,135 @@ export function ProjectSettingsDialog({
               </div>
               <span
                 className={
-                  project.resolver_ready
+                  machine
                     ? "shrink-0 rounded-full bg-resolver/15 px-2 py-0.5 text-xs font-medium text-resolver"
                     : "shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
                 }
               >
-                {project.resolver_ready ? t("settingsCybionConnected") : t("settingsCybionMissing")}
+                {machine ? t("resolverConnected") : t("resolverNotConnected")}
               </span>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant={project.resolver_ready ? "outline" : "default"}
-                disabled={issueKey.isPending}
-                onClick={() => issueKey.mutate()}
-              >
-                <KeyRoundIcon />
-                {project.resolver_ready ? t("actionGenerateKey") : t("actionGenerateKey")}
-              </Button>
-              {project.resolver_ready ? (
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  disabled={revokeKey.isPending}
-                  onClick={() => revokeKey.mutate()}
-                >
-                  <Trash2Icon />
-                  {t("actionRevokeKey")}
-                </Button>
-              ) : null}
-            </div>
-
-            {issued ? (
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-primary">
-                  密钥只显示这一次，请立刻复制到 Cybion 终极机器的检查命令里。
-                </p>
-                <CodeBlock code={resolverCommand(base, issued.token, project.name)} />
-                <div className="flex flex-wrap items-center gap-2">
-                  <CopyButton
-                    value={resolverCommand(base, issued.token, project.name)}
-                    label={t("actionCopy")}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    机器名建议：<code className="font-mono">工单修复 · {project.name}</code>，间隔 120 秒。
+            {!connected ? (
+              <p className="text-xs text-muted-foreground">{t("resolverNeedCybion")}</p>
+            ) : machine ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span
+                    className={
+                      machine.enabled
+                        ? "rounded-full bg-resolver/15 px-2 py-0.5 font-medium text-resolver"
+                        : "rounded-full bg-muted px-2 py-0.5 text-muted-foreground"
+                    }
+                  >
+                    {machine.enabled ? t("resolverEnabled") : t("resolverPaused")}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {machine.worker_label ?? machine.worker_id}
+                  </span>
+                  <span className="opacity-40">·</span>
+                  <span className="text-muted-foreground">
+                    {t("resolverInterval", { n: machine.interval_seconds })}
                   </span>
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  {machine.last_run_at
+                    ? `${t("resolverLastRun")} ${relativeTime(lang, machine.last_run_at)} · ${
+                        machine.last_exit === 0
+                          ? t("resolverExitOk")
+                          : t("resolverExit", { code: machine.last_exit ?? "—" })
+                      }`
+                    : t("resolverNoRun")}
+                </p>
+                {project.resolver_thread_url ? (
+                  <a
+                    className="inline-flex text-xs font-medium text-primary underline-offset-4 hover:underline"
+                    href={project.resolver_thread_url}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {t("actionOpenThread")}
+                  </a>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={toggleMachine.isPending}
+                    onClick={() => toggleMachine.mutate(!machine.enabled)}
+                  >
+                    {machine.enabled ? <PauseIcon /> : <PlayIcon />}
+                    {machine.enabled ? t("actionPause") : t("actionResume")}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={runNow.isPending}
+                    onClick={() => runNow.mutate()}
+                  >
+                    <PlayIcon />
+                    {t("actionRunNow")}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={disconnectMachine.isPending}
+                    onClick={() => disconnectMachine.mutate()}
+                  >
+                    <UnplugIcon />
+                    {t("actionDisconnectMachine")}
+                  </Button>
+                </div>
               </div>
-            ) : null}
+            ) : (
+              <div className="space-y-3">
+                {workers.isError ? (
+                  <p className="text-xs text-destructive">
+                    {(workers.error as Error).message}
+                  </p>
+                ) : available.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{t("resolverNoWorkers")}</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    <Label>{t("resolverWorkersLabel")}</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {available.map((worker) => (
+                        <Button
+                          key={worker.id}
+                          size="sm"
+                          variant={selected === worker.id ? "default" : "outline"}
+                          onClick={() => setWorkerId(worker.id)}
+                        >
+                          {worker.label}
+                          <span className="text-[10px] opacity-70">
+                            {worker.status === "online"
+                              ? t("resolverWorkerOnline")
+                              : t("resolverWorkerOffline")}
+                          </span>
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">{t("resolverConnectHint")}</p>
+                <Button
+                  size="sm"
+                  disabled={!selected || connectMachine.isPending}
+                  onClick={() => connectMachine.mutate()}
+                >
+                  <KeyRoundIcon />
+                  {t("resolverConnect")}
+                </Button>
+              </div>
+            )}
 
-            <div className="space-y-1.5">
-              <Label htmlFor="resolver-thread">{t("resolverThreadLabel")}</Label>
-              <Input
-                id="resolver-thread"
-                value={threadUrl}
-                onChange={(event) => setThreadUrl(event.target.value)}
-                placeholder="https://cybion.ntnl.io/#/threads/<id>"
-              />
-              <p className="text-xs text-muted-foreground">
-                把终极机器的 Thread 链接贴到这里，工单页就能直接跳到修复 Agent 的现场。
-              </p>
-            </div>
+            {failure ? (
+              <p className="text-xs text-destructive">{(failure as Error).message}</p>
+            ) : null}
           </div>
 
           {save.isError ? (
             <p className="text-sm text-destructive">{(save.error as Error).message}</p>
-          ) : null}
-          {issueKey.isError ? (
-            <p className="text-sm text-destructive">{(issueKey.error as Error).message}</p>
           ) : null}
         </div>
 
@@ -191,8 +281,4 @@ export function ProjectSettingsDialog({
       </DialogContent>
     </Dialog>
   )
-}
-
-export function RotateIcon() {
-  return <RotateCcwIcon />
 }

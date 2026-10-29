@@ -27,7 +27,29 @@ export type Project = {
   total_tickets: number
   resolver_ready: boolean
   resolver_thread_url: string | null
+  resolver_machine_id: string | null
   is_owner: boolean
+}
+
+export type CybionWorker = {
+  id: string
+  label: string
+  status: string
+  last_seen_at: number | null
+}
+
+export type Machine = {
+  id: string
+  name: string
+  worker_id: string
+  worker_label: string | null
+  interval_seconds: number
+  thread_id: string
+  thread_title: string | null
+  enabled: boolean
+  last_run_at: number | null
+  last_exit: number | null
+  created_at: number
 }
 
 export type TicketStatus = "draft" | "open" | "closed"

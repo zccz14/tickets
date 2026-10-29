@@ -22,11 +22,12 @@ pub struct ProjectRow {
     pub updated_at: i64,
     pub resolver_key_hash: Option<String>,
     pub resolver_thread_url: Option<String>,
+    pub resolver_machine_id: Option<String>,
 }
 
 pub async fn load_project(state: &AppState, id: &str) -> AppResult<ProjectRow> {
     let row = sqlx::query(
-        "SELECT id,name,description,owner_user_id,created_at,updated_at,resolver_key_hash,resolver_thread_url FROM projects WHERE id=?",
+        "SELECT id,name,description,owner_user_id,created_at,updated_at,resolver_key_hash,resolver_thread_url,resolver_machine_id FROM projects WHERE id=?",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -41,6 +42,7 @@ pub async fn load_project(state: &AppState, id: &str) -> AppResult<ProjectRow> {
         updated_at: row.get(5),
         resolver_key_hash: row.get(6),
         resolver_thread_url: row.get(7),
+        resolver_machine_id: row.get(8),
     })
 }
 
@@ -58,7 +60,7 @@ fn validate_name(name: &str) -> AppResult<String> {
 
 const PROJECT_COLUMNS: &str = "
 SELECT p.id,p.name,p.description,p.owner_user_id,p.created_at,p.updated_at,
-       p.resolver_key_hash,p.resolver_thread_url,u.display_name,
+       p.resolver_key_hash,p.resolver_thread_url,p.resolver_machine_id,u.display_name,
        (SELECT COUNT(*) FROM tickets t WHERE t.project_id=p.id AND t.status='open') AS open_tickets,
        (SELECT COUNT(*) FROM tickets t WHERE t.project_id=p.id AND t.status<>'draft') AS total_tickets
 FROM projects p
@@ -77,9 +79,10 @@ fn project_view(row: &sqlx::sqlite::SqliteRow, viewer: &str) -> ProjectView {
         updated_at: row.get(5),
         resolver_ready: row.get::<Option<String>, _>(6).is_some(),
         resolver_thread_url: row.get(7),
-        owner_name: row.get(8),
-        open_tickets: row.get(9),
-        total_tickets: row.get(10),
+        resolver_machine_id: row.get(8),
+        owner_name: row.get(9),
+        open_tickets: row.get(10),
+        total_tickets: row.get(11),
     }
 }
 

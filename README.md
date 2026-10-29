@@ -3,7 +3,7 @@
 **为 AI Agent 设计的工单系统。** 报障侧的 Agent 在报障人自己的机器上查清现场，修复侧的 Agent 在项目队列上持续监听，两边都通过 HTTP API 说话，人只需要看结论。
 
 - 报障人写一句「哪里不对」就够了：Cybion Thread 会用报障人自己的账号补齐环境、日志、复现步骤，写回「现场证据」。
-- 项目所有者把一条检查命令粘进 Cybion 终极机器：队列里有工单才唤醒修复 Thread，没工单就保持沉默。
+- 项目所有者在项目设置里挑一台 Worker，Tickets 直接在 Cybion 建好终极机器：队列里有工单才唤醒修复 Thread，没工单就保持沉默。登录令牌的受众包含 `cybion.ntnl.io`，所以密钥与机器都由后台代办，不需要任何粘贴。
 - 单个可执行文件内嵌前端，SQLite 存数据，不需要容器、不需要环境变量。
 
 线上实例：<https://tickets.ntnl.io>（Auth Mini 登录）。
@@ -20,11 +20,11 @@ sequenceDiagram
     participant X as 修复 Thread
 
     R->>T: 创建工单（草稿或直接提交）
-    T->>C: 用报障人的 API Key 创建 Thread + 投递调查简报
+    T->>C: 用报障人授权铸出的 API Key 创建 Thread + 投递简报
     C->>C: 在报障人的 Worker 上只读排查
     C->>T: 写回「现场证据」（一次性 Reporter 令牌）
     R->>T: 提交工单
-    M->>T: 每隔几分钟执行检查命令（Resolver 密钥）
+    M->>T: 每 120 秒执行检查命令（Resolver 密钥）
     T-->>M: 有工单时返回非 0 + 队列摘要
     M->>X: 唤醒修复 Thread
     X->>T: 读工单、评论、关闭
@@ -98,10 +98,13 @@ sqlite3 /tmp/tickets-dev/tickets.db \
 | --- | --- | --- |
 | GET | `/api/health`、`/api/meta` | 公开：健康检查与服务地址 |
 | GET | `/api/me`、`/api/me/tickets` | 当前用户与其工单 |
-| GET/PUT/DELETE | `/api/account/cybion` | 连接 / 断开报障人的 Cybion 账号 |
+| GET/PUT/DELETE | `/api/account/cybion` | 连接 / 断开报障人的 Cybion 账号（PUT 自动铸 Key） |
+| GET | `/api/cybion/workers` | 当前账号可用的 Cybion Worker |
+| GET/POST/PATCH/DELETE | `/api/projects/{id}/resolver` | 查看 / 接入 / 暂停或启用 / 断开终极机器（仅所有者） |
+| POST | `/api/projects/{id}/resolver/run` | 让终极机器立即跑一次 |
 | GET/POST | `/api/projects` | 项目列表 / 新建 |
 | GET/PATCH | `/api/projects/{id}` | 项目详情 / 修改（仅所有者） |
-| POST/DELETE | `/api/projects/{id}/resolver-key` | 生成 / 吊销修复密钥（仅所有者） |
+| POST/DELETE | `/api/projects/{id}/resolver-key` | 手动生成 / 吊销修复密钥（仅所有者；界面已改用 `/resolver`） |
 | GET/POST | `/api/projects/{id}/tickets` | 工单列表（`?status=open\|closed\|draft\|all`）/ 新建 |
 | GET/PATCH | `/api/tickets/{id}` | 工单详情 / 修改标题正文（仅报障人） |
 | POST | `/api/tickets/{id}/submit`、`close`、`reopen` | 状态流转 |
