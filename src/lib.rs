@@ -106,6 +106,16 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Hands a comment to the reporter's Thread without blocking the HTTP response.
+pub fn spawn_reporter_progress(state: AppState, ticket_id: String, nudge: String) {
+    tokio::spawn(async move {
+        if let Err(error) = api::tickets::progress_reporter_thread(&state, &ticket_id, &nudge).await
+        {
+            tracing::warn!("推进报障 Thread 失败: {error}");
+        }
+    });
+}
+
 pub fn spawn_thread_creation(state: AppState, ticket_id: String) {
     tokio::spawn(async move {
         if let Err(error) = api::tickets::ensure_reporter_thread(&state, &ticket_id).await {

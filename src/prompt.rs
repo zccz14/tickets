@@ -9,6 +9,7 @@ pub struct ReporterBriefing<'a> {
     pub cybion_base: String,
     pub ticket_number: i64,
     pub project_name: &'a str,
+    pub project_description: &'a str,
     pub title: &'a str,
     pub body: &'a str,
     pub reporter: &'a str,
@@ -29,12 +30,21 @@ pub fn reporter_briefing(briefing: &ReporterBriefing<'_>) -> String {
     } else {
         briefing.body.trim()
     };
+    let description = briefing.project_description.trim();
+    let project_block = if description.is_empty() {
+        format!("- 项目：{}", briefing.project_name)
+    } else {
+        format!(
+            "- 项目：{}\n- 项目描述：{description}",
+            briefing.project_name
+        )
+    };
 
     format!(
         r#"你是工单 #{number} 的「现场调查 Agent」，服务于报障人 {reporter}。
 
 ## 工单
-- 项目：{project}
+{project_block}
 - 标题：{title}
 - 正文：
 ---
@@ -87,7 +97,7 @@ jq -n --rawfile b /tmp/ticket-report.md '{{kind:"evidence", body:$b}}' \
 补充：如果后续报障人在 Thread 里让你再查一次，就用同样的方式再写一份报告（会作为新的证据追加到工单）。
 你可以在 {cybion_base}/ 里看到这个 Thread 的完整上下文。"#,
         number = briefing.ticket_number,
-        project = briefing.project_name,
+        project_block = project_block,
         title = briefing.title,
         body = body,
         reporter = briefing.reporter,
@@ -111,4 +121,41 @@ pub fn resolver_intent(project: &str) -> String {
 pub fn resolver_hint() -> &'static str {
     "排障优先只读；需要报障人补充信息时用 ctl comment 提问并保持 Open；\
 确认解决后用 ctl close 关闭。每次只处理一个工单，处理完再处理下一个。"
+}
+
+/// The message that wakes a reporter's Thread when someone comments on the
+/// Ticket: the Thread owns the investigation, so a new comment is a new lead.
+pub struct CommentNudge<'a> {
+    pub ticket_number: i64,
+    pub author: &'a str,
+    pub role: &'a str,
+    pub body: &'a str,
+    pub closed: bool,
+}
+
+pub fn comment_nudge(nudge: &CommentNudge<'_>) -> String {
+    let closing = if nudge.closed {
+        "\n这张工单已经关闭：把这条评论当作补充记录，除非它暴露了新问题，否则不必再跑一轮调查。\n"
+    } else {
+        ""
+    };
+    format!(
+        r#"## 工单 #{number} 有新评论
+
+{author}（{role}）刚刚写道：
+
+---
+{body}
+---
+
+{closing}请把这条评论当作新线索继续推进：
+1. 能在报障人的机器上验证的，就去验证，并把新证据按同样的方式写回工单；
+2. 已经写过的结论不要重复；
+3. 仍然缺信息，就直接问最关键的问题（最多 3 个）。"#,
+        number = nudge.ticket_number,
+        author = nudge.author,
+        role = nudge.role,
+        body = nudge.body.trim(),
+        closing = closing,
+    )
 }
