@@ -1,0 +1,120 @@
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use std::path::Path;
+use std::str::FromStr;
+
+const SCHEMA: &str = r#"
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id           TEXT PRIMARY KEY,
+  display_name TEXT,
+  created_at   INTEGER NOT NULL
+);
+
+-- One Cybion API key per user. The key is sealed with the deployment's local
+-- secret (see crypto::SecretBox) so a copy of the database alone reveals none.
+CREATE TABLE IF NOT EXISTS cybion_accounts (
+  user_id         TEXT PRIMARY KEY,
+  api_key_cipher  TEXT NOT NULL,
+  key_hint        TEXT NOT NULL,
+  created_at      INTEGER NOT NULL,
+  last_checked_at INTEGER,
+  last_error      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id                     TEXT PRIMARY KEY,
+  owner_user_id          TEXT NOT NULL,
+  name                   TEXT NOT NULL,
+  description            TEXT NOT NULL DEFAULT '',
+  created_at             INTEGER NOT NULL,
+  updated_at             INTEGER NOT NULL,
+  ticket_counter         INTEGER NOT NULL DEFAULT 0,
+  resolver_key_hash      TEXT,
+  resolver_key_hint      TEXT,
+  resolver_key_created_at INTEGER,
+  resolver_thread_url    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS tickets (
+  id                          TEXT PRIMARY KEY,
+  project_id                  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  number                      INTEGER NOT NULL,
+  reporter_user_id            TEXT NOT NULL,
+  title                       TEXT NOT NULL,
+  body                        TEXT NOT NULL,
+  status                      TEXT NOT NULL CHECK(status IN ('draft','open','closed')),
+  created_at                  INTEGER NOT NULL,
+  updated_at                  INTEGER NOT NULL,
+  submitted_at                INTEGER,
+  closed_at                   INTEGER,
+  closed_by_kind              TEXT,
+  closed_by_user_id           TEXT,
+  last_reporter_at            INTEGER NOT NULL DEFAULT 0,
+  last_resolver_at            INTEGER NOT NULL DEFAULT 0,
+  reporter_thread_id          TEXT,
+  reporter_thread_owner       TEXT,
+  reporter_agent_token_hash   TEXT,
+  reporter_agent_token_hint   TEXT,
+  reporter_thread_error       TEXT,
+  UNIQUE(project_id, number)
+);
+
+CREATE TABLE IF NOT EXISTS comments (
+  id             TEXT PRIMARY KEY,
+  ticket_id      TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  kind           TEXT NOT NULL,
+  author_kind    TEXT NOT NULL,
+  author_user_id TEXT,
+  author_label   TEXT,
+  body           TEXT NOT NULL,
+  created_at     INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_ticket   ON comments(ticket_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_tickets_project   ON tickets(project_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tickets_reporter  ON tickets(reporter_user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tickets_resolver  ON tickets(project_id, status, last_resolver_at, last_reporter_at);
+"#;
+
+pub async fn connect(database_path: &Path) -> anyhow::Result<sqlx::SqlitePool> {
+    let options =
+        SqliteConnectOptions::from_str(&format!("sqlite://{}", database_path.to_string_lossy()))?
+            .create_if_missing(true)
+            .busy_timeout(std::time::Duration::from_secs(10));
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(8)
+        .connect_with(options)
+        .await?;
+
+    sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+    Ok(pool)
+}
+
+/// Reads one deployment setting, falling back to the compiled default.
+pub async fn setting(pool: &sqlx::SqlitePool, key: &str, default: &str) -> String {
+    sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key=?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| default.to_owned())
+}
+
+pub async fn put_setting(pool: &sqlx::SqlitePool, key: &str, value: &str) -> anyhow::Result<()> {
+    sqlx::query("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        .bind(key)
+        .bind(value)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
