@@ -144,6 +144,9 @@ impl CybionClient {
 /// A Cybion browser API response for a freshly minted key.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CreatedApiKey {
+    /// Cybion flattens the key fields next to `secret`, so `{ id, label,
+    /// prefix, …, secret }` arrives in one object.
+    #[serde(flatten)]
     pub key: ApiKeyRef,
     pub secret: String,
 }
