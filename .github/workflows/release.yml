@@ -1,0 +1,124 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_tag:
+        description: "只部署一个已发布的 tag（如 v0.1.0-3）"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - id: version
+        run: echo "tag=v0.1.0-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+
+  package:
+    if: github.event_name == 'push'
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Build frontend
+        working-directory: web
+        run: pnpm install --frozen-lockfile && pnpm run build
+      - name: Build release in the production toolchain (Amazon Linux 2023)
+        run: |
+          cat > build-in-container.sh <<'BUILD'
+          set -euxo pipefail
+          dnf install -y --setopt=install_weak_deps=False gcc gcc-c++ make cmake tar gzip findutils perl-core diffutils
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
+          . /root/.cargo/env
+          cargo build --release --locked
+          BUILD
+          test "$(uname -m)" = "x86_64"
+          docker run --rm -v "$PWD":/w -w /w amazonlinux:2023 bash /w/build-in-container.sh
+          rm build-in-container.sh
+      - name: Verify the frontend is embedded
+        run: |
+          bundle="$(sed -n 's/.*src="\(\/assets\/[^" ]*\.js\)".*/\1/p' web/dist/index.html)"
+          test -n "$bundle"
+          strings target/release/tickets | grep -F "$bundle" >/dev/null
+      - name: Package the release archive
+        run: |
+          mkdir -p staging/release/bin
+          install -m 0755 target/release/tickets staging/release/bin/tickets
+          cp deploy/tickets/tickets.service deploy/tickets/Caddyfile staging/release/
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+            -C staging -cf - release | gzip -n > tickets-linux-x86_64.tar.gz
+          sha256sum tickets-linux-x86_64.tar.gz > tickets-linux-x86_64.tar.gz.sha256
+      - name: Attach artifacts to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ needs.release.outputs.tag }}" \
+            tickets-linux-x86_64.tar.gz tickets-linux-x86_64.tar.gz.sha256 \
+            --repo "$GITHUB_REPOSITORY" --clobber
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Upload the archive to S3
+        run: |
+          prefix="s3://${{ vars.AWS_DEPLOY_BUCKET }}/releases/${{ needs.release.outputs.tag }}"
+          aws s3 cp tickets-linux-x86_64.tar.gz "$prefix/tickets-linux-x86_64.tar.gz" --only-show-errors
+          aws s3 cp tickets-linux-x86_64.tar.gz.sha256 "$prefix/tickets-linux-x86_64.tar.gz.sha256" --only-show-errors
+
+  deploy:
+    needs: [release, package]
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.package.result == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ inputs.deploy_tag || needs.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Deploy through AWS Systems Manager
+        env:
+          AWS_DEPLOY_BUCKET: ${{ vars.AWS_DEPLOY_BUCKET }}
+          AWS_INSTANCE_ID: ${{ vars.AWS_INSTANCE_ID }}
+        run: |
+          test -n "${RELEASE_TAG}"
+          .github/scripts/send-deploy.sh "$AWS_INSTANCE_ID" "$RELEASE_TAG"
+      - name: Verify the public endpoint (informational)
+        run: |
+          curl -fsS --retry 6 --retry-delay 5 --retry-all-errors https://tickets.ntnl.io/api/health \
+            || echo "公网健康检查尚未就绪（DNS 或证书）"
