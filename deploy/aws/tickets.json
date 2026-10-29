@@ -1,0 +1,43 @@
+{
+  "account": "524909477426",
+  "region": "ap-northeast-1",
+  "created_at": "2026-10-29",
+  "instance": {
+    "id": "i-0494f14df1b54a72a",
+    "name": "tickets-prod",
+    "type": "t3.small",
+    "ami": "ami-0cc76cc9204b155e0",
+    "ami_note": "Amazon Linux 2023 x86_64",
+    "az": "ap-northeast-1a",
+    "elastic_ip": "13.114.60.69",
+    "eip_allocation": "eipalloc-06b4bb07ac1d03071"
+  },
+  "network": {
+    "vpc": "vpc-0d4ea60f1cf653f38",
+    "subnet": "subnet-0039e735f257c98a3",
+    "security_group": "sg-052205d1cf30bc71f",
+    "security_group_name": "tickets-prod-sg",
+    "ingress": ["tcp/80", "tcp/443"],
+    "admin": "SSM only (no port 22)"
+  },
+  "delivery": {
+    "bucket": "ntnl-tickets-prod-deploy-524909477426-ap-northeast-1",
+    "deploy_role": "arn:aws:iam::524909477426:role/tickets-github-actions-deploy",
+    "instance_profile": "tickets-prod-ssm-profile",
+    "instance_role": "tickets-prod-ssm-role",
+    "artifact": "tickets-linux-x86_64.tar.gz"
+  },
+  "dns": {
+    "record": "tickets.ntnl.io",
+    "type": "A",
+    "content": "13.114.60.69",
+    "proxied": false
+  },
+  "service": {
+    "domain": "https://tickets.ntnl.io",
+    "auth_audience": "tickets.ntnl.io",
+    "data_dir": "/opt/tickets/data",
+    "user": "tickets",
+    "tls": "Caddy 2.11.7, automatic HTTPS"
+  }
+}
