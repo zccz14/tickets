@@ -21,6 +21,10 @@ use crate::{
 pub struct CurrentUser {
     pub id: String,
     pub display_name: Option<String>,
+    /// The Auth Mini access token this request carried. Server-side calls to
+    /// Cybion's browser API act as this person, so the token is forwarded
+    /// rather than replaced by a shared key.
+    pub token: Option<String>,
 }
 
 /// Which side of a Ticket an agent token speaks for.
@@ -107,12 +111,13 @@ pub async fn require_user(
     next: Next,
 ) -> Response {
     let display_name = linkit_name(request.headers());
+    let header_token = bearer(request.headers()).ok();
     let user_id = match &state.dev_user {
         Some(user_id) => user_id.clone(),
         None => {
-            let token = match bearer(request.headers()) {
-                Ok(token) => token,
-                Err(error) => return error.into_response(),
+            let token = match header_token.clone() {
+                Some(token) => token,
+                None => return AppError::unauthorized("缺少访问令牌").into_response(),
             };
             let layer = match state.auth.layer().await {
                 Ok(layer) => layer,
@@ -134,7 +139,14 @@ pub async fn require_user(
         }
     };
 
-    let user = match upsert_user(&state.db, &user_id, display_name.as_deref()).await {
+    let user = match upsert_user(
+        &state.db,
+        &user_id,
+        display_name.as_deref(),
+        header_token.as_deref(),
+    )
+    .await
+    {
         Ok(user) => user,
         Err(error) => return error.into_response(),
     };
@@ -146,6 +158,7 @@ pub async fn upsert_user(
     pool: &SqlitePool,
     user_id: &str,
     display_name: Option<&str>,
+    token: Option<&str>,
 ) -> AppResult<CurrentUser> {
     sqlx::query(
         "INSERT INTO users(id,display_name,created_at) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING",
@@ -170,6 +183,7 @@ pub async fn upsert_user(
     Ok(CurrentUser {
         id: row.get(0),
         display_name: row.get(1),
+        token: token.map(str::to_owned),
     })
 }
 

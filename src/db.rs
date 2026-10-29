@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS cybion_accounts (
   user_id         TEXT PRIMARY KEY,
   api_key_cipher  TEXT NOT NULL,
   key_hint        TEXT NOT NULL,
+  key_id          TEXT,
   created_at      INTEGER NOT NULL,
   last_checked_at INTEGER,
   last_error      TEXT
@@ -40,7 +41,8 @@ CREATE TABLE IF NOT EXISTS projects (
   resolver_key_hash      TEXT,
   resolver_key_hint      TEXT,
   resolver_key_created_at INTEGER,
-  resolver_thread_url    TEXT
+  resolver_thread_url    TEXT,
+  resolver_machine_id    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tickets (
@@ -96,7 +98,33 @@ pub async fn connect(database_path: &Path) -> anyhow::Result<sqlx::SqlitePool> {
         .await?;
 
     sqlx::raw_sql(SCHEMA).execute(&pool).await?;
+    // Columns added after the first release: `CREATE TABLE IF NOT EXISTS` leaves
+    // an existing database untouched, so each one is added explicitly.
+    ensure_column(&pool, "cybion_accounts", "key_id", "TEXT").await?;
+    ensure_column(&pool, "projects", "resolver_machine_id", "TEXT").await?;
     Ok(pool)
+}
+
+async fn ensure_column(
+    pool: &sqlx::SqlitePool,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> anyhow::Result<()> {
+    let exists: bool = sqlx::query_scalar(&format!(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?)"
+    ))
+    .bind(column)
+    .fetch_one(pool)
+    .await?;
+    if !exists {
+        sqlx::raw_sql(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        ))
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
 }
 
 /// Reads one deployment setting, falling back to the compiled default.

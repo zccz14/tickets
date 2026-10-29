@@ -4,6 +4,7 @@ pub mod crypto;
 pub mod cybion;
 pub mod db;
 pub mod error;
+pub mod machine;
 pub mod model;
 pub mod prompt;
 pub mod web;

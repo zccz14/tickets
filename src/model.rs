@@ -30,6 +30,8 @@ pub struct ProjectView {
     pub total_tickets: i64,
     pub resolver_ready: bool,
     pub resolver_thread_url: Option<String>,
+    /// The Cybion Ultimate Machine that watches this project's queue.
+    pub resolver_machine_id: Option<String>,
     pub is_owner: bool,
 }
 
@@ -157,7 +159,10 @@ pub struct CreateComment {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectCybion {
-    pub api_key: String,
+    /// Optional manual key. The UI never asks for one: Tickets mints the key
+    /// through Cybion's browser API instead.
+    #[serde(default)]
+    pub api_key: Option<String>,
 }
 
 #[derive(Deserialize)]

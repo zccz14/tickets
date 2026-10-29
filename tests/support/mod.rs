@@ -6,6 +6,7 @@
 //! and the reporter token from the briefing the fake Cybion received.
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::{
@@ -14,7 +15,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, Request, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
@@ -38,6 +39,7 @@ pub struct MockState {
     input_status: Mutex<u16>,
     read_status: Mutex<u16>,
     seq: Mutex<u64>,
+    machines: Mutex<HashMap<String, Value>>,
 }
 
 /// An in-process stand-in for Cybion's `/v1/threads` API. It records every call
@@ -200,12 +202,26 @@ fn bearer(headers: &HeaderMap) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// The key the fake Cybion hands out when Tickets mints one.
+pub const MOCK_API_KEY: &str = "cyb_mock_user_0123456789";
+
 pub async fn start_mock_cybion() -> MockCybion {
     let state = Arc::new(MockState::default());
     let app = Router::new()
         .route("/v1/threads", post(create_thread))
         .route("/v1/threads/{id}/inputs", post(post_input))
         .route("/v1/threads/{id}", get(read_thread))
+        .route("/api/api-keys", post(create_api_key))
+        .route("/api/api-keys/{id}", delete(delete_api_key))
+        .route("/api/workers", get(list_workers))
+        .route("/api/machines", post(create_machine))
+        .route(
+            "/api/machines/{id}",
+            get(read_machine)
+                .patch(update_machine)
+                .delete(delete_machine),
+        )
+        .route("/api/machines/{id}/run", post(run_machine))
         .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -429,4 +445,159 @@ pub fn extract_agent_token(briefing: &str) -> String {
 
 pub fn error_message(value: &Value) -> &str {
     value["error"].as_str().unwrap_or("")
+}
+
+async fn create_api_key(
+    State(state): State<Arc<MockState>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    state.calls.lock().unwrap().push(Call {
+        method: "POST".to_owned(),
+        path: "/api/api-keys".to_owned(),
+        bearer: bearer(&headers),
+        body: body.clone(),
+    });
+    Json(json!({
+        "key": { "id": "key-0001", "label": body["label"], "prefix": "cyb_mock", "created_at": 1 },
+        "secret": MOCK_API_KEY
+    }))
+    .into_response()
+}
+
+async fn delete_api_key(
+    State(state): State<Arc<MockState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    state.calls.lock().unwrap().push(Call {
+        method: "DELETE".to_owned(),
+        path: format!("/api/api-keys/{id}"),
+        bearer: bearer(&headers),
+        body: Value::Null,
+    });
+    StatusCode::NO_CONTENT.into_response()
+}
+
+async fn list_workers(State(state): State<Arc<MockState>>, headers: HeaderMap) -> Json<Value> {
+    state.calls.lock().unwrap().push(Call {
+        method: "GET".to_owned(),
+        path: "/api/workers".to_owned(),
+        bearer: bearer(&headers),
+        body: Value::Null,
+    });
+    Json(json!([
+        { "id": "worker-1", "label": "MacMini", "status": "online", "owner_user_id": "alice", "last_seen_at": 10 },
+        { "id": "worker-2", "label": "MacBookAir", "status": "offline", "owner_user_id": "alice" }
+    ]))
+}
+
+async fn create_machine(
+    State(state): State<Arc<MockState>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    state.calls.lock().unwrap().push(Call {
+        method: "POST".to_owned(),
+        path: "/api/machines".to_owned(),
+        bearer: bearer(&headers),
+        body: body.clone(),
+    });
+    let id = format!("machine-{:04}", state.machines.lock().unwrap().len() + 1);
+    let machine = json!({
+        "id": id,
+        "name": body["name"],
+        "worker_id": body["worker_id"],
+        "worker_label": "MacMini",
+        "command": body["command"],
+        "intent": body["intent"],
+        "interval_seconds": body["interval_seconds"],
+        "thread_id": format!("thread-{id}"),
+        "thread_title": "终极机器 · 测试",
+        "enabled": true,
+        "last_run_at": null,
+        "last_exit": null,
+        "created_at": 1
+    });
+    state.machines.lock().unwrap().insert(id, machine.clone());
+    Json(machine).into_response()
+}
+
+async fn read_machine(
+    State(state): State<Arc<MockState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    state.calls.lock().unwrap().push(Call {
+        method: "GET".to_owned(),
+        path: format!("/api/machines/{id}"),
+        bearer: bearer(&headers),
+        body: Value::Null,
+    });
+    match state.machines.lock().unwrap().get(&id).cloned() {
+        Some(machine) => Json(machine).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "machine not found" })),
+        )
+            .into_response(),
+    }
+}
+
+async fn update_machine(
+    State(state): State<Arc<MockState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    state.calls.lock().unwrap().push(Call {
+        method: "PATCH".to_owned(),
+        path: format!("/api/machines/{id}"),
+        bearer: bearer(&headers),
+        body: body.clone(),
+    });
+    let mut machines = state.machines.lock().unwrap();
+    let Some(machine) = machines.get_mut(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if let Some(enabled) = body["enabled"].as_bool() {
+        machine["enabled"] = json!(enabled);
+    }
+    Json(machine.clone()).into_response()
+}
+
+async fn delete_machine(
+    State(state): State<Arc<MockState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    state.calls.lock().unwrap().push(Call {
+        method: "DELETE".to_owned(),
+        path: format!("/api/machines/{id}"),
+        bearer: bearer(&headers),
+        body: Value::Null,
+    });
+    if state.machines.lock().unwrap().remove(&id).is_some() {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
+}
+
+async fn run_machine(
+    State(state): State<Arc<MockState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    state.calls.lock().unwrap().push(Call {
+        method: "POST".to_owned(),
+        path: format!("/api/machines/{id}/run"),
+        bearer: bearer(&headers),
+        body: Value::Null,
+    });
+    if state.machines.lock().unwrap().contains_key(&id) {
+        StatusCode::ACCEPTED.into_response()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
 }
