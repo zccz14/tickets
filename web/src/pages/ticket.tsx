@@ -12,10 +12,10 @@ import {
 } from "lucide-react"
 import { useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
+import { Markdown } from "@zccz14/ux"
 
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { Markdown } from "@/lib/markdown"
 import { AuthorName, CodeBlock, CopyButton, StatusBadge } from "@/components/bits"
 import type { Ticket, ThreadInfo } from "@/lib/api"
 import { absoluteTime, relativeTime } from "@/lib/format"
@@ -144,9 +144,9 @@ export function TicketPage() {
             </div>
           ) : null}
 
-          <article className="rounded-xl border border-border/70 bg-card p-5">
+          <article className="rounded-xl border border-border/70 bg-card p-5 text-sm">
             {data.body.trim() ? (
-              <Markdown text={data.body} />
+              <Markdown content={data.body} />
             ) : (
               <p className="text-sm text-muted-foreground">—</p>
             )}
@@ -172,9 +172,9 @@ export function TicketPage() {
                       className="flex items-center justify-center gap-2 py-1 text-center text-xs text-muted-foreground"
                     >
                       <span className="h-px w-6 bg-border" />
-                      <span className="[&_.prose-ticket]:text-xs [&_p]:my-0 [&_p]:text-xs">
-                        <Markdown text={entry.body} />
-                      </span>
+                      <div className="min-w-0 text-xs">
+                        <Markdown content={entry.body} />
+                      </div>
                       <span className="tabular-nums opacity-70">{relativeTime(lang, entry.created_at)}</span>
                       <span className="h-px w-6 bg-border" />
                     </li>
@@ -182,7 +182,7 @@ export function TicketPage() {
                     <li
                       key={entry.id}
                       className={cn(
-                        "rounded-xl border bg-card p-4",
+                        "rounded-xl border bg-card p-4 text-sm",
                         entry.kind === "evidence"
                           ? "border-reporter/30 bg-reporter/[0.04]"
                           : "border-border/70",
@@ -207,7 +207,7 @@ export function TicketPage() {
                           {relativeTime(lang, entry.created_at)}
                         </span>
                       </div>
-                      <Markdown text={entry.body} />
+                      <Markdown content={entry.body} />
                     </li>
                   ),
                 )}

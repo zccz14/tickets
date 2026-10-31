@@ -165,24 +165,6 @@
     radial-gradient(60rem 30rem at -10% 110%, color-mix(in oklch, var(--primary) 4%, transparent), transparent 70%);
 }
 
-@utility prose-ticket {
-  & :where(p) { @apply my-2 leading-relaxed; }
-  & :where(p:first-child) { @apply mt-0; }
-  & :where(p:last-child) { @apply mb-0; }
-  & :where(h1,h2,h3,h4) { @apply mt-4 mb-2 font-medium text-foreground; }
-  & :where(h1) { @apply text-lg; }
-  & :where(h2) { @apply text-base; }
-  & :where(h3) { @apply text-sm; }
-  & :where(ul) { @apply my-2 list-disc space-y-1 pl-5; }
-  & :where(ol) { @apply my-2 list-decimal space-y-1 pl-5; }
-  & :where(code) { @apply rounded bg-secondary px-1 py-0.5 font-mono text-[0.8em] text-foreground; }
-  & :where(pre) { @apply my-2 overflow-x-auto rounded-lg bg-secondary p-3; }
-  & :where(pre code) { @apply bg-transparent p-0; }
-  & :where(a) { @apply text-primary underline underline-offset-2; }
-  & :where(blockquote) { @apply my-2 border-l-2 border-primary/40 pl-3 text-muted-foreground; }
-  & :where(strong) { @apply font-semibold text-foreground; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;
