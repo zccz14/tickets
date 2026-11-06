@@ -79,6 +79,10 @@ pub fn browser_routes() -> Router<AppState> {
             "/api/tickets/{id}/thread",
             get(tickets::read_thread).post(tickets::retry_thread),
         )
+        .route(
+            "/api/tickets/{id}/thread/live",
+            get(tickets::live_thread).post(tickets::live_thread_input),
+        )
 }
 
 pub fn agent_routes() -> Router<AppState> {

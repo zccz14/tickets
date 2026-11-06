@@ -692,6 +692,143 @@ pub async fn retry_thread(
 /// Creates the reporter's Cybion Thread and hands it the investigation
 /// briefing. Safe to retry: it records failures on the Ticket instead of
 /// failing the caller's request.
+/// The ticket page polls this with the newest history id it has seen, so the
+/// Thread is read incrementally and a long investigation never re-transfers
+/// old evidence.
+#[derive(Deserialize)]
+pub struct LiveThreadQuery {
+    #[serde(default)]
+    pub after: i64,
+}
+
+fn browser_token(user: &CurrentUser) -> AppResult<&str> {
+    user.token
+        .as_deref()
+        .ok_or_else(|| AppError::unauthorized("缺少 Auth Mini 访问令牌，请重新登录"))
+}
+
+/// The Thread as Tickets knows it, without a second Cybion round-trip: the
+/// sidebar query fills in live status separately.
+fn live_thread_view(state: &AppState, ticket: &TicketRow) -> ThreadView {
+    ThreadView {
+        thread_id: ticket.reporter_thread_id.clone(),
+        owner_user_id: ticket.reporter_thread_owner.clone(),
+        title: None,
+        status: None,
+        display_status: None,
+        context_tokens: None,
+        url: ticket
+            .reporter_thread_id
+            .as_ref()
+            .map(|thread_id| state.cybion.thread_url(thread_id)),
+        error: ticket.reporter_thread_error.clone(),
+    }
+}
+
+/// Reporting is the conversation: the reporter's own Thread is read through
+/// Tickets, with that person's Auth Mini token. Only the reporter may see it —
+/// the Thread runs on their machine and stays theirs.
+pub async fn live_thread(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(id): Path<String>,
+    Query(query): Query<LiveThreadQuery>,
+) -> AppResult<Json<Value>> {
+    let mut ticket = load_ticket(&state, &id).await?;
+    let project = projects::load_project(&state, &ticket.project_id).await?;
+    projects::require_view(&state, &project, &user.id).await?;
+    if ticket.status == "draft" && ticket.reporter_user_id != user.id {
+        return Err(AppError::not_found("工单不存在"));
+    }
+    if ticket.reporter_user_id != user.id {
+        return Err(AppError::forbidden("只有报障人可以查看现场调查 Thread"));
+    }
+    // A draft has no Thread until its reporter looks at it. Starting the
+    // investigation here is the product: no separate "create Thread" click.
+    // A failed creation records its reason, so this never retries in a loop.
+    if ticket.status == "draft"
+        && ticket.reporter_thread_id.is_none()
+        && ticket.reporter_thread_error.is_none()
+    {
+        let _ = ensure_reporter_thread(&state, &ticket.id).await;
+        ticket = load_ticket(&state, &id).await?;
+    }
+    let thread = live_thread_view(&state, &ticket);
+    let Some(thread_id) = ticket.reporter_thread_id.clone() else {
+        return Ok(Json(json!({
+            "thread": thread,
+            "records": [],
+            "response": null,
+        })));
+    };
+    let token = browser_token(&user)?;
+    let records = state
+        .cybion
+        .browser_history(token, &thread_id, query.after)
+        .await
+        .map_err(AppError::unavailable)?;
+    // The in-flight reply is a preview, not the deliverable: a transient
+    // failure here must not blank a conversation that history already has.
+    let response = state
+        .cybion
+        .browser_response(token, &thread_id)
+        .await
+        .unwrap_or(None);
+    Ok(Json(json!({
+        "thread": thread,
+        "records": records,
+        "response": response,
+    })))
+}
+
+/// A message the reporter types into the conversation. It goes straight into
+/// the Thread with their token, so the Agent answers in the same turn instead
+/// of waiting for a comment to be nudged in from the background.
+pub async fn live_thread_input(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(id): Path<String>,
+    Json(input): Json<CreateComment>,
+) -> AppResult<Json<Value>> {
+    let mut ticket = load_ticket(&state, &id).await?;
+    let project = projects::load_project(&state, &ticket.project_id).await?;
+    projects::require_view(&state, &project, &user.id).await?;
+    if ticket.status == "draft" && ticket.reporter_user_id != user.id {
+        return Err(AppError::not_found("工单不存在"));
+    }
+    if ticket.reporter_user_id != user.id {
+        return Err(AppError::forbidden("只有报障人可以推进现场调查 Thread"));
+    }
+    if ticket.status == "closed" {
+        return Err(AppError::conflict("工单已关闭，不能再推进现场调查 Thread"));
+    }
+    let body = input.body.trim();
+    if body.is_empty() {
+        return Err(AppError::bad_request("消息不能为空"));
+    }
+    if body.chars().count() > 20_000 {
+        return Err(AppError::bad_request("消息不能超过 20000 个字符"));
+    }
+    if ticket.reporter_thread_id.is_none() {
+        ensure_reporter_thread(&state, &ticket.id).await?;
+        ticket = load_ticket(&state, &id).await?;
+    }
+    let Some(thread_id) = ticket.reporter_thread_id.clone() else {
+        return Err(AppError::conflict(
+            "现场调查 Thread 还没有创建完成，请稍后重试",
+        ));
+    };
+    let token = browser_token(&user)?;
+    state
+        .cybion
+        .browser_input(token, &thread_id, body)
+        .await
+        .map_err(AppError::unavailable)?;
+    // A successful turn proves the Thread is healthy again.
+    set_thread_error(&state, &ticket.id, None).await?;
+    Ok(Json(json!({ "accepted": true })))
+}
+
 pub async fn ensure_reporter_thread(state: &AppState, ticket_id: &str) -> AppResult<()> {
     let ticket = load_ticket(state, ticket_id).await?;
     if ticket.reporter_thread_id.is_some() {

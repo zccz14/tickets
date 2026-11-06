@@ -1,6 +1,6 @@
 # Tickets 技术设计
 
-**结论：一个 Rust 单二进制同时提供 API 与前端，SQLite 存全部状态；身份来自 Auth Mini，Agent 身份来自两种 `tk_` 令牌；Cybion 的三次调用（建 Thread、投简报、读 Thread）全部用报障人自己的加密 Key 完成。**
+**结论：一个 Rust 单二进制同时提供 API 与前端，SQLite 存全部状态；身份来自 Auth Mini，Agent 身份来自两种 `tk_` 令牌；管理 Thread 的调用用报障人自己的加密 Key，读取和推进对话则转发报障人的 Auth Mini 令牌，让工单页以本人身份实时看到自己的 Thread。**
 
 ## 架构
 
@@ -75,6 +75,21 @@ erDiagram
 
 `--dev-user` 把整条校验替换成固定用户，并在启动时打 WARN。前端对应的 `DevSessionProvider` 被 `import.meta.env.DEV` 包住，生产构建里这段代码不可达。
 
+### 现场调查的实时视图
+
+工单页的现场调查面板走三条浏览器接口，全部只对报障人开放：
+
+| 接口 | 作用 | Cybion 调用 |
+| --- | --- | --- |
+| `GET /api/tickets/{id}/thread/live?after=N` | 增量历史 + 进行中的回复 | `GET /api/threads/{id}/history?after=N`、`GET /api/threads/{id}/response` |
+| `POST /api/tickets/{id}/thread/live` | 报障人直接对 Agent 说话 | `POST /api/threads/{id}/inputs` |
+
+- **身份**：Tickets 不透传自己的服务身份，而是把这次浏览器请求的 Auth Mini 访问令牌原样转给 Cybion；Thread 的 owner 是报障人，所以只有报障人的令牌读得到。项目所有者访问 live 接口得到 403。
+- **增量**：前端保存已见记录的最大 `id`，下一次只取更大的记录；进行中的回复单独读 `/response`，避免重复传输历史里的截图与工具输出。
+- **内部提示词**：简报与评论唤醒分别带 `<!-- tickets-briefing -->`、`<!-- tickets-nudge -->` 标记，前端据此把它们从对话里过滤掉；旧 Thread 用文本前缀兜底识别。
+- **草稿**：`live` 首次读取时若工单是草稿且没有 Thread、也没有历史错误，会调用 `ensure_reporter_thread`，把「打开草稿」变成「开始调查」。失败会记录错误，因此不会在轮询里反复重试。
+- **人工确认**：草稿的提交按钮仍是唯一确认动作；已提交工单的现场调查不改变队列水位，Agent 写回证据时照常抬高 `last_reporter_at`。
+
 ### 项目可见性
 
 `visibility` 与 `project_grants` 一起决定谁能看到一个项目：
@@ -137,7 +152,7 @@ Cybion 的 `/v1/threads` 按 API Key 的 owner 隔离，服务端拿一把公共
 
 失败分类直接面向用户：401 提示重新登录（受众缺失或令牌过期），403 提示权限不足，其他状态带上截断后的响应体。
 
-Thread 创建发生在事务提交之后的后台任务里，因此提交工单永远不会等 Cybion。草稿不自动建 Thread，报障人在工单页点「创建调查 Thread」时才走同一条后台流程。失败写进 `tickets.reporter_thread_error`，工单照常进入队列；报障人可以在工单页重试。
+Thread 创建发生在事务提交之后的后台任务里，因此提交工单永远不会等 Cybion。草稿在报障人第一次读取现场调查时创建（`GET /api/tickets/{id}/thread/live` 负责 ensure），失败写进 `tickets.reporter_thread_error`，工单照常进入队列；报障人可以在工单页重试。
 
 ## 队列与终极机器
 
