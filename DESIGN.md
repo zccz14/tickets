@@ -89,6 +89,8 @@ erDiagram
 - **内部提示词**：简报与评论唤醒分别带 `<!-- tickets-briefing -->`、`<!-- tickets-nudge -->` 标记，前端据此把它们从对话里过滤掉；旧 Thread 用文本前缀兜底识别。
 - **草稿**：`live` 首次读取时若工单是草稿且没有 Thread、也没有历史错误，会调用 `ensure_reporter_thread`，把「打开草稿」变成「开始调查」。失败会记录错误，因此不会在轮询里反复重试。
 - **人工确认**：草稿的提交按钮仍是唯一确认动作；已提交工单的现场调查不改变队列水位，Agent 写回证据时照常抬高 `last_reporter_at`。
+- **标题**：工单标题与 Thread 标题同源。新建时服务端用第一条非空行（`title_from_body`，最多 80 字）当作标题，Thread 也用这个标题；之后 `GET /api/tickets/{id}/thread` 读到 Thread 的新名字时写回工单，并去掉 Tickets 早先加的 `[#12] ` 前缀。
+- **草稿的正文**：草稿页不单独渲染正文，正文作为报障人的第一个气泡传给面板（`intro`），与后续 Thread 消息共用一套渲染。提交后正文回到正文区，面板只显示调查过程。
 
 ### 项目可见性
 
@@ -152,7 +154,7 @@ Cybion 的 `/v1/threads` 按 API Key 的 owner 隔离，服务端拿一把公共
 
 失败分类直接面向用户：401 提示重新登录（受众缺失或令牌过期），403 提示权限不足，其他状态带上截断后的响应体。
 
-Thread 创建发生在事务提交之后的后台任务里，因此提交工单永远不会等 Cybion。草稿在报障人第一次读取现场调查时创建（`GET /api/tickets/{id}/thread/live` 负责 ensure），失败写进 `tickets.reporter_thread_error`，工单照常进入队列；报障人可以在工单页重试。
+Thread 创建发生在事务提交之后的后台任务里，因此创建工单永远不会等 Cybion。草稿在报障人第一次读取现场调查时创建（`GET /api/tickets/{id}/thread/live` 负责 ensure），失败写进 `tickets.reporter_thread_error`，工单照常进入队列；报障人可以在工单页重试。新建工单没有标题输入：`POST /api/projects/{id}/tickets` 省略 `title` 时由 `body` 的第一条非空行推导，Agent 显式传入的标题仍然优先。
 
 ## 队列与终极机器
 

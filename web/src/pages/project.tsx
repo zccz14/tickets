@@ -1,24 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { ChevronLeftIcon, MessageSquareIcon, PaperclipIcon, PlusIcon, SettingsIcon } from "lucide-react"
 import { useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Textarea } from "@/components/ui/textarea"
 import { EmptyState, PageHeader, StatusBadge, VisibilityBadge } from "@/components/bits"
 import { ProjectSettingsDialog } from "@/components/project-settings"
-import type { Project, Ticket, TicketSummary } from "@/lib/api"
+import type { Project, TicketSummary } from "@/lib/api"
 import { relativeTime } from "@/lib/format"
 import { useCopy, useSession } from "@/lib/session"
 
@@ -29,12 +18,8 @@ export function ProjectPage() {
   const { request } = useSession()
   const { t, lang } = useCopy()
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
   const [filter, setFilter] = useState<Filter>("open")
-  const [creating, setCreating] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [title, setTitle] = useState("")
-  const [body, setBody] = useState("")
 
   const project = useQuery({
     queryKey: ["project", id],
@@ -43,22 +28,6 @@ export function ProjectPage() {
   const tickets = useQuery({
     queryKey: ["tickets", id, filter],
     queryFn: () => request<TicketSummary[]>(`/api/projects/${id}/tickets?status=${filter}`),
-  })
-
-  const create = useMutation({
-    mutationFn: (submit: boolean) =>
-      request<Ticket>(`/api/projects/${id}/tickets`, {
-        method: "POST",
-        body: JSON.stringify({ title, body, submit }),
-      }),
-    onSuccess: (ticket) => {
-      void queryClient.invalidateQueries({ queryKey: ["tickets", id] })
-      void queryClient.invalidateQueries({ queryKey: ["projects"] })
-      setCreating(false)
-      setTitle("")
-      setBody("")
-      navigate(`/tickets/${ticket.id}`)
-    },
   })
 
   const emptyKey =
@@ -102,7 +71,7 @@ export function ProjectPage() {
                 {t("actionManaging")}
               </Button>
             ) : null}
-            <Button onClick={() => setCreating(true)}>
+            <Button onClick={() => navigate(`/projects/${id}/new`)}>
               <PlusIcon />
               {t("actionCreateTicket")}
             </Button>
@@ -132,7 +101,7 @@ export function ProjectPage() {
           title={t(emptyKey)}
           action={
             filter === "open" || filter === "all" ? (
-              <Button variant="outline" onClick={() => setCreating(true)}>
+              <Button variant="outline" onClick={() => navigate(`/projects/${id}/new`)}>
                 <PlusIcon />
                 {t("actionCreateTicket")}
               </Button>
@@ -172,59 +141,6 @@ export function ProjectPage() {
           ))}
         </div>
       )}
-
-      <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{t("ticketNewTitle")}</DialogTitle>
-            <DialogDescription>{t("ticketDraftHint")}</DialogDescription>
-          </DialogHeader>
-          <form
-            className="space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (title.trim()) create.mutate(true)
-            }}
-          >
-            <div className="space-y-1.5">
-              <Label htmlFor="ticket-title">{t("ticketTitleLabel")}</Label>
-              <Input
-                id="ticket-title"
-                autoFocus
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder={t("ticketTitlePlaceholder")}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="ticket-body">{t("ticketBodyLabel")}</Label>
-              <Textarea
-                id="ticket-body"
-                rows={7}
-                value={body}
-                onChange={(event) => setBody(event.target.value)}
-                placeholder={t("ticketBodyPlaceholder")}
-              />
-            </div>
-            {create.isError ? (
-              <p className="text-sm text-destructive">{(create.error as Error).message}</p>
-            ) : null}
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={!title.trim() || create.isPending}
-                onClick={() => create.mutate(false)}
-              >
-                {t("actionSaveDraft")}
-              </Button>
-              <Button type="submit" disabled={!title.trim() || create.isPending}>
-                {t("actionSubmit")}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
 
       {project.data ? (
         <ProjectSettingsDialog

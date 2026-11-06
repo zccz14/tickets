@@ -156,6 +156,9 @@ pub struct GrantView {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateTicket {
+    /// Optional: a Ticket started from a conversation has no title field, so
+    /// the first message supplies it.
+    #[serde(default)]
     pub title: String,
     #[serde(default)]
     pub body: String,
@@ -234,6 +237,18 @@ pub fn excerpt(text: &str, limit: usize) -> String {
     }
     let cut: String = collapsed.chars().take(limit).collect();
     format!("{cut}…")
+}
+
+/// The first message names the Ticket: its first non-empty line, collapsed and
+/// clipped. The same value becomes the Cybion Thread title, so the two stay in
+/// step without asking the reporter for a separate title.
+pub fn title_from_body(body: &str) -> String {
+    let line = body
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default();
+    excerpt(line, 80)
 }
 
 pub fn is_agent(kind: &str) -> bool {

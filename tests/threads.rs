@@ -235,7 +235,7 @@ async fn only_the_reporter_sees_the_thread_link() {
 
     let (status, live) = reporter.get(&format!("/api/tickets/{id}/thread")).await;
     assert_eq!(status, StatusCode::OK, "{live}");
-    assert_eq!(live["title"], "[#1] 示例工单");
+    assert_eq!(live["title"], "[#1] 节点离线");
     assert_eq!(live["display_status"], "运行中");
     assert_eq!(live["context_tokens"], 4321);
     assert_eq!(
@@ -490,6 +490,40 @@ async fn the_reporter_types_straight_into_the_thread() {
         .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert!(error_message(&body).contains("Cybion 返回 500"), "{body}");
+}
+
+#[tokio::test]
+async fn renaming_the_thread_renames_the_ticket() {
+    let env = Env::new().await;
+    let alice = env.app("alice").await;
+    let bob = env.app("bob").await;
+    connect(&bob, BOB_KEY).await;
+    let project = alice.create_project("支付网关").await;
+    let ticket = bob
+        .create_ticket(&project, "高峰期支付回调超时", "成功率跌到 93%", true)
+        .await;
+    let ticket_id = ticket["id"].as_str().unwrap().to_owned();
+    let with_thread = wait_for_thread(&bob, &ticket_id).await;
+    let thread_id = with_thread["reporter_thread"]["thread_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(with_thread["title"], "高峰期支付回调超时");
+
+    // The Thread is the name's source of truth; our `[#n] ` decoration is not
+    // part of the Ticket title.
+    env.mock
+        .set_thread_title(&thread_id, "[#1] 支付回调上游超时");
+    let (status, thread) = bob.get(&format!("/api/tickets/{ticket_id}/thread")).await;
+    assert_eq!(status, StatusCode::OK, "{thread}");
+    assert_eq!(thread["title"], "[#1] 支付回调上游超时");
+    assert_eq!(bob.ticket(&ticket_id).await["title"], "支付回调上游超时");
+
+    // A title typed in Cybion without our prefix is used verbatim.
+    env.mock.set_thread_title(&thread_id, "退款链路也受影响");
+    let (status, _) = bob.get(&format!("/api/tickets/{ticket_id}/thread")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bob.ticket(&ticket_id).await["title"], "退款链路也受影响");
 }
 
 #[tokio::test]
