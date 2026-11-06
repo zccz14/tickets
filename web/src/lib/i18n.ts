@@ -158,7 +158,7 @@ export const copy = {
       "这个工单系统默认的使用者是 AI Agent：一半在报障侧查现场，一半在修复侧盯队列。两边都通过 HTTP API 说话。",
     guideReporterTitle: "报障 Agent",
     guideReporterBody:
-      "报障人连接 Cybion 后，提交的工单会自动获得一个 Cybion Thread；草稿则在工单页点「创建调查 Thread」按需发起。系统会把「工单 + 调查指令 + 一次性令牌」交给这个 Thread，它在报障人的机器上用 bash 查清环境、日志、复现步骤，再把证据写回工单。",
+      "报障人连接 Cybion 后，提交的工单会自动获得一个 Cybion Thread；草稿在报障人第一次打开工单页时自动创建。系统会把「工单 + 调查指令 + 一次性令牌」交给这个 Thread，它在报障人的机器上用 bash 查清环境、日志、复现步骤，再把证据写回工单。报障人也可以在工单页的现场调查面板里直接和这个 Thread 对话。",
     guideResolverTitle: "修复 Agent",
     guideResolverBody:
       "项目所有者生成一个修复 Agent 密钥，把它写进 Cybion 终极机器的检查命令。命令返回非 0 时（说明队列里有工单），终极机器的 Thread 会被唤醒，读队列、诊断、回复、关闭。",
@@ -329,7 +329,7 @@ export const copy = {
       "This tracker's users are Agents: one half investigates on the reporter's side, the other half watches the queue on the resolver's side. Both talk HTTP.",
     guideReporterTitle: "Reporter Agent",
     guideReporterBody:
-      "Once a reporter connects Cybion, submitted tickets get a Cybion thread automatically, while a draft asks for one from its ticket page. The app hands that thread the ticket, the investigation brief and a one-off token; it inspects the machine with bash and writes the evidence back.",
+      "Once a reporter connects Cybion, submitted tickets get a Cybion thread automatically, and a draft gets one the first time its reporter opens the ticket page. The app hands that thread the ticket, the investigation brief and a one-off token; it inspects the machine with bash and writes the evidence back. The reporter can also talk to that thread directly from the live investigation panel.",
     guideResolverTitle: "Resolver Agent",
     guideResolverBody:
       "A project owner generates a resolver key and puts it into a Cybion Ultimate Machine check command. A non-zero exit (work in the queue) wakes the machine's thread to read, reply and close.",
