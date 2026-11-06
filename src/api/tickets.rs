@@ -265,16 +265,21 @@ pub async fn create(
 ) -> AppResult<Json<TicketView>> {
     let project = projects::load_project(&state, &project_id).await?;
     projects::require_view(&state, &project, &user.id).await?;
-    let title = input.title.trim();
+    let body = input.body.trim();
+    if body.chars().count() > 20_000 {
+        return Err(AppError::bad_request("工单正文不能超过 20000 个字符"));
+    }
+    // A conversation has no title field: the first message names the Ticket.
+    // Agents that already have a title still send one and keep it verbatim.
+    let title = match input.title.trim() {
+        "" => crate::model::title_from_body(body),
+        title => title.to_owned(),
+    };
     if title.is_empty() {
         return Err(AppError::bad_request("工单标题不能为空"));
     }
     if title.chars().count() > 200 {
         return Err(AppError::bad_request("工单标题不能超过 200 个字符"));
-    }
-    let body = input.body.trim();
-    if body.chars().count() > 20_000 {
-        return Err(AppError::bad_request("工单正文不能超过 20000 个字符"));
     }
     let status = if input.submit { "open" } else { "draft" };
     let timestamp = now();
@@ -621,6 +626,16 @@ pub async fn reopen(
     read(State(state), Extension(user), Path(id)).await
 }
 
+/// Turns a Thread title into the Ticket title. Threads created by Tickets used
+/// to carry a `[#12] ` prefix; strip it so the Ticket keeps the plain name the
+/// reporter sees in Cybion.
+fn title_from_thread(title: &str, number: i64) -> String {
+    let title = title.trim();
+    let prefix = format!("[#{number}] ");
+    let title = title.strip_prefix(&prefix).unwrap_or(title).trim();
+    title.chars().take(200).collect()
+}
+
 pub async fn read_thread(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -650,13 +665,25 @@ pub async fn read_thread(
         None => Err("报障人还没有连接 Cybion 账号".to_owned()),
     };
     let (title, status, display_status, context_tokens, error) = match live {
-        Ok(info) => (
-            Some(info.title),
-            Some(info.status),
-            Some(info.display_status),
-            info.context_tokens,
-            None,
-        ),
+        Ok(info) => {
+            // The Thread names the Ticket. A rename in Cybion should reach the
+            // Ticket without a second edit here.
+            let synced = title_from_thread(&info.title, ticket.number);
+            if !synced.is_empty() && synced != "Untitled thread" && synced != ticket.title {
+                sqlx::query("UPDATE tickets SET title=? WHERE id=?")
+                    .bind(&synced)
+                    .bind(&ticket.id)
+                    .execute(&state.db)
+                    .await?;
+            }
+            (
+                Some(info.title),
+                Some(info.status),
+                Some(info.display_status),
+                info.context_tokens,
+                None,
+            )
+        }
         Err(error) => (None, None, None, None, Some(error)),
     };
     Ok(Json(ThreadView {

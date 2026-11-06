@@ -10,7 +10,7 @@ import {
   SparklesIcon,
   XCircleIcon,
 } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { Markdown } from "@zccz14/ux"
 
@@ -42,6 +42,20 @@ export function TicketPage() {
     enabled: Boolean(ticket.data),
     refetchInterval: ticket.data?.reporter_thread.thread_id ? 15_000 : false,
   })
+
+  // The Thread names the Ticket; a rename in Cybion syncs on the next read.
+  // Refresh the page header when the title the server reports changes.
+  const knownThreadTitle = useRef<string | null>(null)
+  const threadTitle = thread.data?.title ?? null
+  useEffect(() => {
+    if (!threadTitle) return
+    const first = knownThreadTitle.current === null
+    if (threadTitle === knownThreadTitle.current) return
+    knownThreadTitle.current = threadTitle
+    if (first) return
+    void queryClient.invalidateQueries({ queryKey: ["ticket", id] })
+    void queryClient.invalidateQueries({ queryKey: ["tickets"] })
+  }, [threadTitle, queryClient, id])
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["ticket", id] })
@@ -145,16 +159,27 @@ export function TicketPage() {
             </div>
           ) : null}
 
-          <article className="rounded-xl border border-border/70 bg-card p-5 text-sm">
-            {data.body.trim() ? (
-              <Markdown content={data.body} />
-            ) : (
-              <p className="text-sm text-muted-foreground">—</p>
-            )}
-          </article>
+          {data.status !== "draft" ? (
+            <article className="rounded-xl border border-border/70 bg-card p-5 text-sm">
+              {data.body.trim() ? (
+                <Markdown content={data.body} />
+              ) : (
+                <p className="text-sm text-muted-foreground">—</p>
+              )}
+            </article>
+          ) : null}
 
           {data.is_reporter ? (
-            <ThreadLivePanel ticketId={data.id} thread={threadInfo} status={data.status} />
+            <ThreadLivePanel
+              ticketId={data.id}
+              thread={threadInfo}
+              status={data.status}
+              intro={
+                data.status === "draft"
+                  ? { body: data.body, createdAt: data.created_at }
+                  : undefined
+              }
+            />
           ) : null}
 
           <div className="space-y-3">

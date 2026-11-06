@@ -36,6 +36,7 @@ pub struct Call {
 pub struct MockState {
     calls: Mutex<Vec<Call>>,
     threads: Mutex<Vec<String>>,
+    thread_titles: Mutex<HashMap<String, String>>,
     create_status: Mutex<u16>,
     input_status: Mutex<u16>,
     read_status: Mutex<u16>,
@@ -80,6 +81,15 @@ impl MockCybion {
 
     pub fn thread_count(&self) -> usize {
         self.state.threads.lock().unwrap().len()
+    }
+
+    /// Renames a Thread the way a reporter would in Cybion.
+    pub fn set_thread_title(&self, id: &str, title: &str) {
+        self.state
+            .thread_titles
+            .lock()
+            .unwrap()
+            .insert(id.to_owned(), title.to_owned());
     }
 
     /// What the browser history endpoint answers, in the order given.
@@ -139,9 +149,18 @@ async fn create_thread(
     let id = format!("thread-{:04}", *seq);
     drop(seq);
     state.threads.lock().unwrap().push(id.clone());
+    let title = body["title"]
+        .as_str()
+        .unwrap_or("Untitled thread")
+        .to_owned();
+    state
+        .thread_titles
+        .lock()
+        .unwrap()
+        .insert(id.clone(), title.clone());
     Json(json!({
         "id": id,
-        "title": body["title"],
+        "title": title,
         "status": "idle",
         "display_status": "空闲",
         "created_by": "mock-user",
@@ -205,9 +224,16 @@ async fn read_thread(
         )
             .into_response();
     }
+    let title = state
+        .thread_titles
+        .lock()
+        .unwrap()
+        .get(&id)
+        .cloned()
+        .unwrap_or_else(|| "Untitled thread".to_owned());
     Json(json!({
         "id": id,
-        "title": "[#1] 示例工单",
+        "title": title,
         "status": "running",
         "display_status": "运行中",
         "created_by": "mock-user",

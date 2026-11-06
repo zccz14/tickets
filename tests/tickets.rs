@@ -58,6 +58,41 @@ async fn drafts_are_visible_only_to_their_reporter() {
 }
 
 #[tokio::test]
+async fn the_first_message_names_a_new_ticket() {
+    let env = Env::new().await;
+    let user = env.app("alice").await;
+    let project = user.create_project("支付网关").await;
+
+    let (status, ticket) = user
+        .post(
+            &format!("/api/projects/{project}/tickets"),
+            Some(json!({ "body": "\n  支付回调成功率跌到 93%  \n日志里是上游 30 秒超时" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{ticket}");
+    assert_eq!(ticket["title"], "支付回调成功率跌到 93%");
+    assert_eq!(ticket["status"], "draft");
+    assert!(ticket["body"].as_str().unwrap().contains("30 秒超时"));
+
+    // An explicit title still wins, and an empty conversation is refused.
+    let (status, titled) = user
+        .post(
+            &format!("/api/projects/{project}/tickets"),
+            Some(json!({ "title": "我自己起的标题", "body": "正文" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{titled}");
+    assert_eq!(titled["title"], "我自己起的标题");
+    let (status, _) = user
+        .post(
+            &format!("/api/projects/{project}/tickets"),
+            Some(json!({ "body": "   " })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn submitting_opens_the_ticket_and_puts_it_in_the_queue() {
     let env = Env::new().await;
     let owner = env.app("owner").await;

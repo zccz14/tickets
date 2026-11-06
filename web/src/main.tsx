@@ -13,6 +13,7 @@ import { DevSessionProvider } from "@/lib/dev"
 import { SessionProvider } from "@/lib/session"
 import { GuidePage } from "@/pages/guide"
 import { MyTicketsPage } from "@/pages/my"
+import { NewTicketPage } from "@/pages/new-ticket"
 import { ProjectPage } from "@/pages/project"
 import { ProjectsPage } from "@/pages/projects"
 import { SettingsPage } from "@/pages/settings"
@@ -36,6 +37,7 @@ function Pages() {
     <AppShell>
       <Routes>
         <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/projects/:id/new" element={<NewTicketPage />} />
         <Route path="/projects/:id" element={<ProjectPage />} />
         <Route path="/tickets/:id" element={<TicketPage />} />
         <Route path="/my" element={<MyTicketsPage />} />

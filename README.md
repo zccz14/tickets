@@ -19,7 +19,7 @@ sequenceDiagram
     participant M as 终极机器（项目所有者）
     participant X as 修复 Thread
 
-    R->>T: 创建工单（草稿或直接提交）
+    R->>T: 新建工单：发送第一条消息（创建草稿）
     T->>C: 用报障人授权铸出的 API Key 创建 Thread + 投递简报
     C->>C: 在报障人的 Worker 上只读排查
     C->>T: 写回「现场证据」（一次性 Reporter 令牌）
@@ -107,7 +107,7 @@ sqlite3 /tmp/tickets-dev/tickets.db \
 | GET/POST | `/api/projects/{id}/grants` | 私有项目的授权成员 / 添加成员（仅所有者） |
 | DELETE | `/api/projects/{id}/grants/{user_id}` | 移除授权成员（仅所有者） |
 | POST/DELETE | `/api/projects/{id}/resolver-key` | 手动生成 / 吊销修复密钥（仅所有者；界面已改用 `/resolver`） |
-| GET/POST | `/api/projects/{id}/tickets` | 工单列表（`?status=open\|closed\|draft\|all`）/ 新建 |
+| GET/POST | `/api/projects/{id}/tickets` | 工单列表（`?status=open\|closed\|draft\|all`）/ 新建（省略 `title` 时取第一条消息的第一行） |
 | GET/PATCH | `/api/tickets/{id}` | 工单详情 / 修改标题正文（仅报障人） |
 | POST | `/api/tickets/{id}/submit`、`close`、`reopen` | 状态流转 |
 | POST | `/api/tickets/{id}/comments` | 评论 |

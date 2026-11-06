@@ -50,10 +50,14 @@ export function ThreadLivePanel({
   ticketId,
   thread,
   status,
+  intro,
 }: {
   ticketId: string
   thread: ThreadInfo
   status: "draft" | "open" | "closed"
+  /// The message that started a draft: it is the first turn of the same
+  /// conversation, so it belongs inside the panel, not above it.
+  intro?: { body: string; createdAt: number }
 }) {
   const { request } = useSession()
   const { t } = useCopy()
@@ -104,6 +108,7 @@ export function ThreadLivePanel({
     void queryClient.invalidateQueries({ queryKey: ["tickets"] })
   }, [live.data?.thread.thread_id, queryClient, ticketId])
 
+  const hasIntro = Boolean(intro?.body.trim())
   const pending = pendingRecords(
     live.data?.response,
     new Set(records.map((record) => record.id)),
@@ -174,18 +179,31 @@ export function ThreadLivePanel({
         </span>
       </header>
 
-      <div className="max-h-[26rem] overflow-y-auto px-4 py-4">
+      <div
+        className={cn(
+          "overflow-y-auto px-4 py-4",
+          status === "draft" ? "max-h-[34rem]" : "max-h-[26rem]",
+        )}
+      >
         {starting ? (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2Icon className="size-3.5 animate-spin" />
-            {t("threadLiveStarting")}
-          </p>
-        ) : messages.length === 0 ? (
+          <div className="space-y-3">
+            {hasIntro ? (
+              <ul className="space-y-3">
+                <IntroEntry intro={intro!} />
+              </ul>
+            ) : null}
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2Icon className="size-3.5 animate-spin" />
+              {t("threadLiveStarting")}
+            </p>
+          </div>
+        ) : messages.length === 0 && !hasIntro ? (
           <p className="rounded-lg border border-dashed border-border/70 px-3 py-6 text-center text-sm text-muted-foreground">
             {error ?? t("threadLiveEmpty")}
           </p>
         ) : (
           <ul className="space-y-3">
+            {hasIntro ? <IntroEntry intro={intro!} /> : null}
             {messages.map((record) => (
               <ThreadEntry key={`${record.id}:${record.created_at}`} record={record} />
             ))}
@@ -220,7 +238,7 @@ export function ThreadLivePanel({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault()
                 submit()
               }
@@ -250,6 +268,20 @@ export function ThreadLivePanel({
         </p>
       )}
     </section>
+  )
+}
+
+function IntroEntry({ intro }: { intro: { body: string; createdAt: number } }) {
+  const { lang } = useCopy()
+  return (
+    <li className="flex justify-end">
+      <div className="max-w-[85%] rounded-xl rounded-br-sm bg-primary/8 px-3 py-2 text-sm">
+        <Markdown content={intro.body} />
+        <p className="mt-1 text-right text-[10px] text-muted-foreground">
+          {relativeTime(lang, intro.createdAt)}
+        </p>
+      </div>
+    </li>
   )
 }
 
