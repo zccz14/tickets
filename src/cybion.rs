@@ -82,6 +82,104 @@ impl CybionClient {
         serde_json::from_str(&text).map_err(|error| format!("Cybion 响应不是合法 JSON: {error}"))
     }
 
+    /// The browser API acts as the signed-in person: the token is Auth Mini's
+    /// access token, not a Cybion API key. Tickets proxies these calls so the
+    /// ticket page can show and drive the reporter's own Thread.
+    async fn browser_send(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        token: &str,
+        body: Option<Value>,
+    ) -> Result<Value, String> {
+        let mut request = self
+            .http
+            .request(method, format!("{}{}", self.base, path))
+            .bearer_auth(token)
+            .header("accept", "application/json");
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|error| format!("无法连接 Cybion: {error}"))?;
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            let detail: String = text.chars().take(300).collect();
+            return Err(match status.as_u16() {
+                401 => "登录已失效或当前登录没有 Cybion 权限，请重新登录".to_owned(),
+                403 => "当前账号没有访问这个 Cybion Thread 的权限".to_owned(),
+                404 => "Cybion Thread 不存在或已被删除".to_owned(),
+                _ => format!("Cybion 返回 {status}: {detail}"),
+            });
+        }
+        if text.trim().is_empty() {
+            return Ok(Value::Null);
+        }
+        serde_json::from_str(&text).map_err(|error| format!("Cybion 响应不是合法 JSON: {error}"))
+    }
+
+    /// History records after `after`: the ticket page polls with the newest id
+    /// it has seen, so a long investigation never re-transfers old evidence.
+    pub async fn browser_history(
+        &self,
+        token: &str,
+        thread_id: &str,
+        after: i64,
+    ) -> Result<Vec<Value>, String> {
+        let value = self
+            .browser_send(
+                reqwest::Method::GET,
+                &format!("/api/threads/{thread_id}/history?after={after}"),
+                token,
+                None,
+            )
+            .await?;
+        match value {
+            Value::Array(records) => Ok(records),
+            _ => Err("Cybion 线程历史不是数组".to_owned()),
+        }
+    }
+
+    /// The reply that is still being produced, if any. This is the cheap poll
+    /// that makes the conversation feel live between durable history records.
+    pub async fn browser_response(
+        &self,
+        token: &str,
+        thread_id: &str,
+    ) -> Result<Option<Value>, String> {
+        let value = self
+            .browser_send(
+                reqwest::Method::GET,
+                &format!("/api/threads/{thread_id}/response"),
+                token,
+                None,
+            )
+            .await?;
+        Ok(match value {
+            Value::Null => None,
+            other => Some(other),
+        })
+    }
+
+    pub async fn browser_input(
+        &self,
+        token: &str,
+        thread_id: &str,
+        input: &str,
+    ) -> Result<(), String> {
+        self.browser_send(
+            reqwest::Method::POST,
+            &format!("/api/threads/{thread_id}/inputs"),
+            token,
+            Some(json!({ "input": input })),
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// Checks that a key is accepted without creating anything: a read of a
     /// thread that cannot exist answers 401 for a bad key and 400/404 for a
     /// good one.

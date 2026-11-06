@@ -12,12 +12,13 @@ use std::sync::{Arc, Mutex};
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, Request, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
 use http_body_util::BodyExt;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tickets::{AppState, Options, bootstrap, db, router};
@@ -40,6 +41,10 @@ pub struct MockState {
     read_status: Mutex<u16>,
     seq: Mutex<u64>,
     machines: Mutex<HashMap<String, Value>>,
+    history: Mutex<Vec<Value>>,
+    response: Mutex<Option<Value>>,
+    browser_input_status: Mutex<u16>,
+    browser_inputs: Mutex<Vec<String>>,
 }
 
 /// An in-process stand-in for Cybion's `/v1/threads` API. It records every call
@@ -75,6 +80,24 @@ impl MockCybion {
 
     pub fn thread_count(&self) -> usize {
         self.state.threads.lock().unwrap().len()
+    }
+
+    /// What the browser history endpoint answers, in the order given.
+    pub fn set_thread_history(&self, records: Vec<Value>) {
+        *self.state.history.lock().unwrap() = records;
+    }
+
+    pub fn set_thread_response(&self, response: Option<Value>) {
+        *self.state.response.lock().unwrap() = response;
+    }
+
+    pub fn fail_browser_input_with(&self, status: u16) {
+        *self.state.browser_input_status.lock().unwrap() = status;
+    }
+
+    /// Every message the ticket page sent into the Thread, in order.
+    pub fn browser_inputs(&self) -> Vec<String> {
+        self.state.browser_inputs.lock().unwrap().clone()
     }
 
     /// The briefing posted into the Thread that mentions this ticket.
@@ -211,6 +234,9 @@ pub async fn start_mock_cybion() -> MockCybion {
         .route("/v1/threads", post(create_thread))
         .route("/v1/threads/{id}/inputs", post(post_input))
         .route("/v1/threads/{id}", get(read_thread))
+        .route("/api/threads/{id}/history", get(browser_history))
+        .route("/api/threads/{id}/response", get(browser_response))
+        .route("/api/threads/{id}/inputs", post(browser_input))
         .route("/api/api-keys", post(create_api_key))
         .route("/api/api-keys/{id}", delete(delete_api_key))
         .route("/api/workers", get(list_workers))
@@ -454,6 +480,80 @@ pub fn extract_agent_token(briefing: &str) -> String {
 
 pub fn error_message(value: &Value) -> &str {
     value["error"].as_str().unwrap_or("")
+}
+
+#[derive(Deserialize)]
+struct BrowserHistoryQuery {
+    #[serde(default)]
+    after: i64,
+}
+
+async fn browser_history(
+    State(state): State<Arc<MockState>>,
+    Path(id): Path<String>,
+    Query(query): Query<BrowserHistoryQuery>,
+    headers: HeaderMap,
+) -> Response {
+    state.calls.lock().unwrap().push(Call {
+        method: "GET".to_owned(),
+        path: format!("/api/threads/{id}/history"),
+        bearer: bearer(&headers),
+        body: json!({ "after": query.after }),
+    });
+    let records: Vec<Value> = state
+        .history
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|record| record["id"].as_i64().unwrap_or(0) > query.after)
+        .cloned()
+        .collect();
+    Json(json!(records)).into_response()
+}
+
+async fn browser_response(
+    State(state): State<Arc<MockState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    state.calls.lock().unwrap().push(Call {
+        method: "GET".to_owned(),
+        path: format!("/api/threads/{id}/response"),
+        bearer: bearer(&headers),
+        body: Value::Null,
+    });
+    let response = state.response.lock().unwrap().clone();
+    Json(match response {
+        Some(value) => value,
+        None => Value::Null,
+    })
+    .into_response()
+}
+
+async fn browser_input(
+    State(state): State<Arc<MockState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    state.calls.lock().unwrap().push(Call {
+        method: "POST".to_owned(),
+        path: format!("/api/threads/{id}/inputs"),
+        bearer: bearer(&headers),
+        body: body.clone(),
+    });
+    let status = *state.browser_input_status.lock().unwrap();
+    if status != 0 {
+        return (
+            StatusCode::from_u16(status).unwrap(),
+            Json(json!({ "error": "mock browser input failure" })),
+        )
+            .into_response();
+    }
+    if let Some(input) = body["input"].as_str() {
+        state.browser_inputs.lock().unwrap().push(input.to_owned());
+    }
+    Json(json!({ "id": 1 })).into_response()
 }
 
 async fn create_api_key(

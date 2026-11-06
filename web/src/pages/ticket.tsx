@@ -17,6 +17,7 @@ import { Markdown } from "@zccz14/ux"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { AuthorName, CodeBlock, CopyButton, StatusBadge } from "@/components/bits"
+import { ThreadLivePanel } from "@/components/thread-live"
 import type { Ticket, ThreadInfo } from "@/lib/api"
 import { absoluteTime, relativeTime } from "@/lib/format"
 import { usePageTitle } from "@/lib/page-title"
@@ -152,6 +153,10 @@ export function TicketPage() {
             )}
           </article>
 
+          {data.is_reporter ? (
+            <ThreadLivePanel ticketId={data.id} thread={threadInfo} status={data.status} />
+          ) : null}
+
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
               <MessageSquareIcon className="size-3.5" />
@@ -215,6 +220,10 @@ export function TicketPage() {
             )}
           </div>
 
+          {data.status !== "closed" && data.is_reporter ? (
+            <p className="text-xs text-muted-foreground">{t("ticketCommentReporterHint")}</p>
+          ) : null}
+
           {data.status !== "closed" ? (
             <form
               className="space-y-2 rounded-xl border border-border/70 bg-card p-3"
@@ -265,7 +274,7 @@ export function TicketPage() {
             title={t("ticketSidebarReporterAgent")}
             thread={threadInfo}
             loading={thread.isFetching}
-            canCreate={data.is_reporter}
+            canCreate={data.is_reporter && data.status !== "draft"}
             isDraft={data.status === "draft"}
             creating={createThread.isPending}
             onCreate={() => createThread.mutate()}

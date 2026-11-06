@@ -41,7 +41,8 @@ pub fn reporter_briefing(briefing: &ReporterBriefing<'_>) -> String {
     };
 
     format!(
-        r#"你是工单 #{number} 的「现场调查 Agent」，服务于报障人 {reporter}。
+        r#"<!-- tickets-briefing -->
+你是工单 #{number} 的「现场调查 Agent」，服务于报障人 {reporter}。
 
 ## 工单
 {project_block}
@@ -140,7 +141,8 @@ pub fn comment_nudge(nudge: &CommentNudge<'_>) -> String {
         ""
     };
     format!(
-        r#"## 工单 #{number} 有新评论
+        r#"<!-- tickets-nudge -->
+## 工单 #{number} 有新评论
 
 {author}（{role}）刚刚写道：
 

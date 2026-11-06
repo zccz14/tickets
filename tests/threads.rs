@@ -346,3 +346,191 @@ async fn the_briefing_carries_the_project_description() {
         "简报缺少项目描述: {briefing}"
     );
 }
+
+#[tokio::test]
+async fn the_live_thread_streams_the_reporters_own_thread_incrementally() {
+    let env = Env::new().await;
+    let alice = env.app("alice").await;
+    let bob = env.app("bob").await;
+    connect(&bob, BOB_KEY).await;
+    let project = alice.create_project("支付网关").await;
+    let ticket = bob
+        .create_ticket(&project, "回调超时", "3% 的支付回调超过 30 秒", true)
+        .await;
+    let ticket_id = ticket["id"].as_str().unwrap().to_owned();
+    let ticket = wait_for_thread(&bob, &ticket_id).await;
+    let thread_id = ticket["reporter_thread"]["thread_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    env.mock.set_thread_history(vec![
+        json!({
+            "id": 1,
+            "thread_id": thread_id,
+            "kind": "input",
+            "payload": { "content": "问题只在高峰期出现" },
+            "created_at": 10,
+        }),
+        json!({
+            "id": 2,
+            "thread_id": thread_id,
+            "kind": "response_output",
+            "payload": {
+                "type": "message",
+                "content": [{ "type": "output_text", "text": "先看网关日志" }],
+            },
+            "created_at": 11,
+        }),
+    ]);
+    env.mock.set_thread_response(Some(
+        json!({ "status": "running", "response": { "output": [] } }),
+    ));
+
+    let live = format!("/api/tickets/{ticket_id}/thread/live");
+    let (status, body) = bob
+        .call_with(
+            Some("dev-browser-token"),
+            "GET",
+            &format!("{live}?after=0"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["thread"]["thread_id"], thread_id);
+    assert_eq!(body["records"].as_array().unwrap().len(), 2);
+    assert_eq!(body["response"]["status"], "running");
+
+    // The call acts as the reporter: their browser token, not the stored API key.
+    let history_call = env
+        .mock
+        .calls_to(&format!("/api/threads/{thread_id}/history"))
+        .last()
+        .cloned()
+        .expect("没有读取 Thread 历史");
+    assert_eq!(history_call.bearer.as_deref(), Some("dev-browser-token"));
+    assert_eq!(history_call.body["after"], 0);
+
+    // Incremental polling only carries records the page has not seen.
+    let (status, body) = bob
+        .call_with(
+            Some("dev-browser-token"),
+            "GET",
+            &format!("{live}?after=1"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["records"].as_array().unwrap().len(), 1);
+    assert_eq!(body["records"][0]["id"], 2);
+
+    // The Thread runs on the reporter's machine and stays theirs.
+    let (status, body) = alice.get(&live).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+}
+
+#[tokio::test]
+async fn the_reporter_types_straight_into_the_thread() {
+    let env = Env::new().await;
+    let alice = env.app("alice").await;
+    let bob = env.app("bob").await;
+    connect(&bob, BOB_KEY).await;
+    let project = alice.create_project("支付网关").await;
+    let ticket = bob.create_ticket(&project, "回调超时", "", true).await;
+    let ticket_id = ticket["id"].as_str().unwrap().to_owned();
+    let ticket = wait_for_thread(&bob, &ticket_id).await;
+    let thread_id = ticket["reporter_thread"]["thread_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let live = format!("/api/tickets/{ticket_id}/thread/live");
+
+    let (status, body) = bob
+        .call_with(
+            Some("dev-browser-token"),
+            "POST",
+            &live,
+            Some(json!({ "body": "日志在 /tmp/gateway.log" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["accepted"], true);
+    assert_eq!(env.mock.browser_inputs(), vec!["日志在 /tmp/gateway.log"]);
+    let call = env
+        .mock
+        .calls_to(&format!("/api/threads/{thread_id}/inputs"))
+        .last()
+        .cloned()
+        .expect("没有写入 Thread");
+    assert_eq!(call.bearer.as_deref(), Some("dev-browser-token"));
+
+    let (status, _) = bob
+        .call_with(
+            Some("dev-browser-token"),
+            "POST",
+            &live,
+            Some(json!({ "body": "  " })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = alice
+        .post(&live, Some(json!({ "body": "我是项目所有者" })))
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // A rejected turn is reported instead of pretending the message landed.
+    env.mock.fail_browser_input_with(500);
+    let (status, body) = bob
+        .call_with(
+            Some("dev-browser-token"),
+            "POST",
+            &live,
+            Some(json!({ "body": "再试一次" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(error_message(&body).contains("Cybion 返回 500"), "{body}");
+}
+
+#[tokio::test]
+async fn opening_a_draft_starts_its_thread_once() {
+    let env = Env::new().await;
+    let alice = env.app("alice").await;
+    let bob = env.app("bob").await;
+    connect(&bob, BOB_KEY).await;
+    let project = alice.create_project("支付网关").await;
+    let ticket = bob
+        .create_ticket(&project, "还没想清楚", "现象是偶尔白屏", false)
+        .await;
+    let ticket_id = ticket["id"].as_str().unwrap().to_owned();
+    assert_eq!(ticket["status"], "draft");
+    assert_eq!(env.mock.thread_count(), 0);
+
+    let live = format!("/api/tickets/{ticket_id}/thread/live");
+    let (status, body) = bob
+        .call_with(
+            Some("dev-browser-token"),
+            "GET",
+            &format!("{live}?after=0"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["thread"]["thread_id"].is_string(), "{body}");
+    assert_eq!(env.mock.thread_count(), 1);
+    let briefing = env.mock.briefing_for(&ticket_id);
+    assert!(briefing.contains("草稿"), "{briefing}");
+    assert!(briefing.contains("<!-- tickets-briefing -->"), "{briefing}");
+
+    // The next poll reads the existing Thread instead of minting another one.
+    let (status, _) = bob
+        .call_with(
+            Some("dev-browser-token"),
+            "GET",
+            &format!("{live}?after=0"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(env.mock.thread_count(), 1);
+}

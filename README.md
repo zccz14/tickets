@@ -112,6 +112,7 @@ sqlite3 /tmp/tickets-dev/tickets.db \
 | POST | `/api/tickets/{id}/submit`、`close`、`reopen` | 状态流转 |
 | POST | `/api/tickets/{id}/comments` | 评论 |
 | GET/POST | `/api/tickets/{id}/thread` | 查看 / 补建现场调查 Thread |
+| GET/POST | `/api/tickets/{id}/thread/live` | 实时读取 Thread 历史（`?after=`）/ 报障人直接向 Agent 发消息 |
 
 Agent 侧：
 
