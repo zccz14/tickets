@@ -1,14 +1,18 @@
-import { createContext, useContext, useMemo, type ReactNode } from "react"
+import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react"
 import { useAuthMini } from "auth-mini-react-components"
 import { useLinkit } from "linkit-react-components"
 import type { AuthMiniApi } from "auth-mini/sdk/browser"
 
-import { createRequest, type ApiFn } from "./api"
+import { createRequest, type ApiFn, type Meta } from "./api"
 import { resolveLang, translate, type CopyKey, type Lang } from "./i18n"
 
 type SessionValue = {
   request: ApiFn
   lang: Lang
+  /// The signed-in person's Auth Mini token, for services the browser calls directly.
+  getToken: () => Promise<string>
+  /// Origin of the Cybion deployment this Tickets instance is bound to.
+  cybionBaseUrl: string
 }
 
 export const SessionContext = createContext<SessionValue | null>(null)
@@ -26,17 +30,18 @@ async function accessToken(sdk: AuthMiniApi): Promise<string> {
 }
 
 /** Auth Mini token + Linkit identity, in one place for every page. */
-export function SessionProvider({ children }: { children: ReactNode }) {
+export function SessionProvider({ meta, children }: { meta: Meta; children: ReactNode }) {
   const { sdk } = useAuthMini()
   const linkit = useLinkit()
   const lang = resolveLang(linkit.lang)
+  const getToken = useCallback(async () => {
+    if (!sdk) throw new Error("Auth Mini 尚未就绪")
+    return accessToken(sdk)
+  }, [sdk])
   const request = useMemo(
     () =>
       createRequest(
-        async () => {
-          if (!sdk) throw new Error("Auth Mini 尚未就绪")
-          return accessToken(sdk)
-        },
+        getToken,
         (): Record<string, string> => {
           const username = linkit.myProfile?.username
           if (!username) return {}
@@ -45,7 +50,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       ),
     [sdk, linkit.myProfile?.username],
   )
-  const value = useMemo(() => ({ request, lang }), [request, lang])
+  const value = useMemo(
+    () => ({ request, lang, getToken, cybionBaseUrl: meta.cybion_base_url }),
+    [request, lang, getToken, meta.cybion_base_url],
+  )
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
 }
 

@@ -62,9 +62,9 @@ function Session({ meta, children }: { meta: Meta; children: ReactNode }) {
     >
       <LinkitProvider linkitBaseUrl={meta.linkit_base_url} lang="zh-CN">
         {DEV_USER ? (
-          <DevSessionProvider>{children}</DevSessionProvider>
+          <DevSessionProvider meta={meta}>{children}</DevSessionProvider>
         ) : (
-          <SessionProvider>{children}</SessionProvider>
+          <SessionProvider meta={meta}>{children}</SessionProvider>
         )}
       </LinkitProvider>
     </AuthMiniProvider>
