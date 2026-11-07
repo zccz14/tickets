@@ -8,12 +8,18 @@ import { test } from "node:test"
  * components it embeds in the header. The Linkit file is not optional — without
  * it `.linkit-my-info` has no rules and the account avatar renders at its
  * natural size, which is how this regression reached production once.
+ *
+ * The embedded Thread View ships its own compiled stylesheet for the same
+ * reason: its utilities are generated from the package sources, so nothing in
+ * this app's build emits them. Skipping the import leaves the investigation
+ * panel structurally present but unstyled.
  */
 const css = readFileSync(path.join(import.meta.dirname, "../src/index.css"), "utf8")
 
-test("the app imports both the shell and the Linkit component styles", () => {
+test("the app imports every stylesheet its components ship", () => {
   assert.match(css, /@import\s+"@zccz14\/ux\/styles\.css";/)
   assert.match(css, /@import\s+"linkit-react-components\/styles\.css";/)
+  assert.match(css, /@import\s+"@zccz14\/cybion-components\/styles\.css";/)
 })
 
 /**

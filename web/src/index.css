@@ -4,6 +4,7 @@
 @import "@fontsource-variable/geist";
 @import "@zccz14/ux/styles.css";
 @import "linkit-react-components/styles.css";
+@import "@zccz14/cybion-components/styles.css";
 
 @custom-variant dark (&:is(.dark *));
 
