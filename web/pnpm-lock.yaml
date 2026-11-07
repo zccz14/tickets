@@ -21,8 +21,8 @@ importers:
         specifier: ^5.101.2
         version: 5.105.0(@types/react@19.3.0)(react@19.3.1)
       '@zccz14/cybion-components':
-        specifier: ^0.1.0
-        version: 0.1.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(@zccz14/ux@0.7.4(@base-ui/react@1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@types/react@19.3.0)(linkit-react-components@0.6.2(@base-ui/react@1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(auth-mini-react-components@0.6.10(@types/react@19.3.0)(auth-mini@0.4.14)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(lucide-react@1.64.0(@types/react@19.3.0)(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-router-dom@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+        specifier: ^0.1.1
+        version: 0.1.1(@tanstack/react-query@5.105.0(@types/react@19.3.0)(react@19.3.1))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(@zccz14/ux@0.7.4(@base-ui/react@1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@types/react@19.3.0)(linkit-react-components@0.6.2(@base-ui/react@1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(auth-mini-react-components@0.6.10(@types/react@19.3.0)(auth-mini@0.4.14)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(lucide-react@1.64.0(@types/react@19.3.0)(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-router-dom@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@zccz14/ux':
         specifier: 0.7.4
         version: 0.7.4(@base-ui/react@1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@types/react@19.3.0)(linkit-react-components@0.6.2(@base-ui/react@1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(auth-mini-react-components@0.6.10(@types/react@19.3.0)(auth-mini@0.4.14)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(lucide-react@1.64.0(@types/react@19.3.0)(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-router-dom@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)
@@ -1403,9 +1403,10 @@ packages:
       oxc-transform-react:
         optional: true
 
-  '@zccz14/cybion-components@0.1.0':
-    resolution: {integrity: sha512-/rfci5cjcxikT3Y43LFn0L91NcWZUCyeXeXbkGDgEd47bEUeOzm4DzR/PBAyTWELEpYWlsjZneKSNFwG3vvMBQ==}
+  '@zccz14/cybion-components@0.1.1':
+    resolution: {integrity: sha512-EGmbzKuOa3fUVwTBTmPS/DZMDB7aiikuKFdVm+jxTze3WwVzi8SYbvF8YygXLpRlcU/mtexYo1LpG11EiLokZg==}
     peerDependencies:
+      '@tanstack/react-query': ^5.85.3
       '@zccz14/ux': ^0.7.4
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
@@ -4559,10 +4560,11 @@ snapshots:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.3.5(@types/node@24.19.2)(jiti@2.7.0)
 
-  '@zccz14/cybion-components@0.1.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(@zccz14/ux@0.7.4(@base-ui/react@1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@types/react@19.3.0)(linkit-react-components@0.6.2(@base-ui/react@1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(auth-mini-react-components@0.6.10(@types/react@19.3.0)(auth-mini@0.4.14)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(lucide-react@1.64.0(@types/react@19.3.0)(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-router-dom@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
+  '@zccz14/cybion-components@0.1.1(@tanstack/react-query@5.105.0(@types/react@19.3.0)(react@19.3.1))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(@zccz14/ux@0.7.4(@base-ui/react@1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@types/react@19.3.0)(linkit-react-components@0.6.2(@base-ui/react@1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(auth-mini-react-components@0.6.10(@types/react@19.3.0)(auth-mini@0.4.14)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(lucide-react@1.64.0(@types/react@19.3.0)(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-router-dom@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
       '@base-ui/react': 1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@shadcn/react': 0.2.1(@types/react@19.3.0)(react@19.3.1)
+      '@tanstack/react-query': 5.105.0(@types/react@19.3.0)(react@19.3.1)
       '@zccz14/ux': 0.7.4(@base-ui/react@1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@types/react@19.3.0)(linkit-react-components@0.6.2(@base-ui/react@1.9.0(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(auth-mini-react-components@0.6.10(@types/react@19.3.0)(auth-mini@0.4.14)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(lucide-react@1.64.0(@types/react@19.3.0)(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react-router-dom@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)
       class-variance-authority: 0.7.1
       clsx: 2.1.1
