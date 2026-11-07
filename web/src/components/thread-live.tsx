@@ -65,7 +65,7 @@ export function ThreadLivePanel({
   }, [threadId, queryClient, ticketId])
 
   return (
-    <section className="flex max-h-[40rem] min-h-0 flex-col overflow-hidden rounded-xl border border-border/70 bg-card">
+    <section className="flex h-[40rem] max-h-[calc(100svh_-_14rem)] min-h-0 flex-col overflow-hidden rounded-xl border border-border/70 bg-card">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-4 py-3">
         <span className="flex size-6 items-center justify-center rounded-md bg-reporter/12 text-reporter">
           <BotIcon className="size-3.5" />
@@ -91,7 +91,7 @@ export function ThreadLivePanel({
             threadId={threadId}
             intro={intro}
             readOnly={status === "closed"}
-            className="min-h-[18rem]"
+            className="min-h-0 flex-1"
           />
         </CybionThreadProvider>
       ) : (
