@@ -126,8 +126,9 @@ pub async fn disconnect(
     Ok(Json(json!({ "disconnected": true, "revoked": revoked })))
 }
 
-/// The reporter's Cybion key, decrypted, for server-side Thread calls.
-pub async fn reporter_key(state: &AppState, user_id: &str) -> AppResult<Option<String>> {
+/// A person's Cybion key, decrypted, for server-side Thread calls. Used for the
+/// reporter's investigation Thread and for pushing the owner's resolver Thread.
+pub async fn key_for(state: &AppState, user_id: &str) -> AppResult<Option<String>> {
     let Some(cipher) = sqlx::query_scalar::<_, String>(
         "SELECT api_key_cipher FROM cybion_accounts WHERE user_id=?",
     )

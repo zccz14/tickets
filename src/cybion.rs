@@ -273,46 +273,6 @@ pub struct WorkerInfo {
     pub last_seen_at: Option<i64>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct MachineInfo {
-    #[serde(default)]
-    pub id: String,
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub worker_id: String,
-    #[serde(default)]
-    pub worker_label: Option<String>,
-    #[serde(default)]
-    pub command: String,
-    #[serde(default)]
-    pub intent: Option<String>,
-    #[serde(default)]
-    pub interval_seconds: i64,
-    #[serde(default)]
-    pub thread_id: String,
-    #[serde(default)]
-    pub thread_title: Option<String>,
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub last_run_at: Option<i64>,
-    #[serde(default)]
-    pub last_exit: Option<i64>,
-    #[serde(default)]
-    pub created_at: i64,
-}
-
-/// What Cybion needs to create an Ultimate Machine.
-#[derive(Clone, Debug, Serialize)]
-pub struct NewMachine<'a> {
-    pub name: &'a str,
-    pub worker_id: &'a str,
-    pub command: &'a str,
-    pub intent: Option<&'a str>,
-    pub interval_seconds: i64,
-}
-
 impl CybionClient {
     /// Calls Cybion's browser API with the end user's Auth Mini token. These
     /// endpoints are not part of the `cyb_` integration API: they act for the
@@ -388,77 +348,5 @@ impl CybionClient {
             return Err(Self::browser_error(status, &text));
         }
         Self::parse(&text)
-    }
-
-    pub async fn create_machine(
-        &self,
-        bearer: &str,
-        machine: &NewMachine<'_>,
-    ) -> Result<MachineInfo, String> {
-        let body = serde_json::to_value(machine)
-            .map_err(|error| format!("机器参数无法序列化: {error}"))?;
-        let (status, text) = self
-            .browser_call(reqwest::Method::POST, "/api/machines", bearer, Some(body))
-            .await?;
-        if !(200..300).contains(&status) {
-            return Err(Self::browser_error(status, &text));
-        }
-        Self::parse(&text)
-    }
-
-    /// `Ok(None)` means the machine is gone on Cybion's side. Cybion exposes the
-    /// collection (`GET /api/machines`), not a single-machine read, so the list
-    /// is filtered here.
-    pub async fn read_machine(
-        &self,
-        bearer: &str,
-        id: &str,
-    ) -> Result<Option<MachineInfo>, String> {
-        let (status, text) = self
-            .browser_call(reqwest::Method::GET, "/api/machines", bearer, None)
-            .await?;
-        if !(200..300).contains(&status) {
-            return Err(Self::browser_error(status, &text));
-        }
-        let machines: Vec<MachineInfo> = Self::parse(&text)?;
-        Ok(machines.into_iter().find(|machine| machine.id == id))
-    }
-
-    pub async fn update_machine(
-        &self,
-        bearer: &str,
-        id: &str,
-        body: Value,
-    ) -> Result<MachineInfo, String> {
-        let path = format!("/api/machines/{id}");
-        let (status, text) = self
-            .browser_call(reqwest::Method::PATCH, &path, bearer, Some(body))
-            .await?;
-        if !(200..300).contains(&status) {
-            return Err(Self::browser_error(status, &text));
-        }
-        Self::parse(&text)
-    }
-
-    pub async fn delete_machine(&self, bearer: &str, id: &str) -> Result<(), String> {
-        let path = format!("/api/machines/{id}");
-        let (status, text) = self
-            .browser_call(reqwest::Method::DELETE, &path, bearer, None)
-            .await?;
-        if (200..300).contains(&status) || status == 404 {
-            return Ok(());
-        }
-        Err(Self::browser_error(status, &text))
-    }
-
-    pub async fn run_machine(&self, bearer: &str, id: &str) -> Result<(), String> {
-        let path = format!("/api/machines/{id}/run");
-        let (status, text) = self
-            .browser_call(reqwest::Method::POST, &path, bearer, None)
-            .await?;
-        if (200..300).contains(&status) {
-            return Ok(());
-        }
-        Err(Self::browser_error(status, &text))
     }
 }

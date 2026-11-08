@@ -4,33 +4,36 @@ import {
   ChevronLeftIcon,
   ExternalLinkIcon,
   Loader2Icon,
-  MessageSquareIcon,
-  RefreshCwIcon,
   SendIcon,
   SparklesIcon,
+  WrenchIcon,
   XCircleIcon,
+  RefreshCwIcon,
 } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { Markdown } from "@zccz14/ux"
 
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
 import { AuthorName, CodeBlock, CopyButton, StatusBadge } from "@/components/bits"
 import { ThreadLivePanel } from "@/components/thread-live"
 import type { Ticket, ThreadInfo } from "@/lib/api"
 import { absoluteTime, relativeTime } from "@/lib/format"
 import { usePageTitle } from "@/lib/page-title"
 import { useCopy, useSession } from "@/lib/session"
-import { cn } from "@/lib/utils"
 
+/**
+ * A Ticket is three pieces of text and two Threads: what the reporter saw, what
+ * the reporter Agent measured, and what the resolver Agent did about it. There
+ * is no comment timeline — the reporter talks to their own Agent in the live
+ * panel, and the resolver Agent is pushed the finished report.
+ */
 export function TicketPage() {
   const { id = "" } = useParams()
   const { request } = useSession()
   const { t, lang } = useCopy()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [draft, setDraft] = useState("")
 
   const ticket = useQuery({
     queryKey: ["ticket", id],
@@ -60,6 +63,7 @@ export function TicketPage() {
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["ticket", id] })
     void queryClient.invalidateQueries({ queryKey: ["ticket-thread", id] })
+    void queryClient.invalidateQueries({ queryKey: ["ticket-thread-live", id] })
     void queryClient.invalidateQueries({ queryKey: ["tickets", ticket.data?.project_id] })
     void queryClient.invalidateQueries({ queryKey: ["projects"] })
   }
@@ -67,20 +71,10 @@ export function TicketPage() {
   const act = (path: string) =>
     request<Ticket>(`/api/tickets/${id}/${path}`, { method: "POST", body: JSON.stringify({}) })
 
-  const comment = useMutation({
-    mutationFn: () =>
-      request<Ticket>(`/api/tickets/${id}/comments`, {
-        method: "POST",
-        body: JSON.stringify({ body: draft }),
-      }),
-    onSuccess: () => {
-      setDraft("")
-      invalidate()
-    },
-  })
   const submit = useMutation({ mutationFn: () => act("submit"), onSuccess: invalidate })
   const close = useMutation({ mutationFn: () => act("close"), onSuccess: invalidate })
   const reopen = useMutation({ mutationFn: () => act("reopen"), onSuccess: invalidate })
+  const dispatch = useMutation({ mutationFn: () => act("dispatch"), onSuccess: invalidate })
   const createThread = useMutation({
     mutationFn: () => act("thread"),
     // Refresh even on failure: the server records the reason on the Ticket and
@@ -112,7 +106,9 @@ export function TicketPage() {
   const threadInfo = thread.data ?? data.reporter_thread
   const canClose = data.is_reporter || data.is_project_owner
   const pending =
-    comment.isPending || submit.isPending || close.isPending || reopen.isPending || createThread.isPending
+    submit.isPending || close.isPending || reopen.isPending || createThread.isPending || dispatch.isPending
+  const dispatchRetryable =
+    data.is_project_owner && data.status === "open" && Boolean(data.resolver_thread.error)
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5">
@@ -169,7 +165,7 @@ export function TicketPage() {
             </article>
           ) : null}
 
-          {data.is_reporter ? (
+          {data.is_reporter && (threadInfo.thread_id || data.status !== "closed") ? (
             <ThreadLivePanel
               ticketId={data.id}
               thread={threadInfo}
@@ -182,99 +178,56 @@ export function TicketPage() {
             />
           ) : null}
 
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-              <MessageSquareIcon className="size-3.5" />
-              {t("ticketComments")}
-              <span className="text-foreground">{data.comments.length}</span>
-            </div>
-
-            {data.comments.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-border/70 px-4 py-6 text-center text-sm text-muted-foreground">
-                {t("ticketNoComments")}
-              </p>
-            ) : (
-              <ul className="space-y-3">
-                {data.comments.map((entry) =>
-                  entry.kind === "system" ? (
-                    <li
-                      key={entry.id}
-                      className="flex items-center justify-center gap-2 py-1 text-center text-xs text-muted-foreground"
-                    >
-                      <span className="h-px w-6 bg-border" />
-                      <div className="min-w-0 text-xs">
-                        <Markdown content={entry.body} />
-                      </div>
-                      <span className="tabular-nums opacity-70">{relativeTime(lang, entry.created_at)}</span>
-                      <span className="h-px w-6 bg-border" />
-                    </li>
-                  ) : (
-                    <li
-                      key={entry.id}
-                      className={cn(
-                        "rounded-xl border bg-card p-4 text-sm",
-                        entry.kind === "evidence"
-                          ? "border-reporter/30 bg-reporter/[0.04]"
-                          : "border-border/70",
-                      )}
-                    >
-                      <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-                        <AuthorName
-                          kind={entry.author_kind}
-                          userId={entry.author_user_id}
-                          name={entry.author_name}
-                        />
-                        {entry.kind === "evidence" ? (
-                          <span className="inline-flex items-center gap-1 rounded-md border border-reporter/25 bg-reporter/10 px-1.5 py-0.5 text-[10px] text-reporter">
-                            <SparklesIcon className="size-2.5" />
-                            现场证据
-                          </span>
-                        ) : null}
-                        <span
-                          className="ml-auto text-muted-foreground"
-                          title={absoluteTime(lang, entry.created_at)}
-                        >
-                          {relativeTime(lang, entry.created_at)}
-                        </span>
-                      </div>
-                      <Markdown content={entry.body} />
-                    </li>
-                  ),
-                )}
-              </ul>
-            )}
-          </div>
-
-          {data.status !== "closed" && data.is_reporter ? (
-            <p className="text-xs text-muted-foreground">{t("ticketCommentReporterHint")}</p>
-          ) : null}
-
-          {data.status !== "closed" ? (
-            <form
-              className="space-y-2 rounded-xl border border-border/70 bg-card p-3"
-              onSubmit={(event) => {
-                event.preventDefault()
-                if (draft.trim()) comment.mutate()
-              }}
-            >
-              <Textarea
-                rows={3}
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                placeholder={t("ticketCommentPlaceholder")}
-                className="border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-              />
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-muted-foreground">Markdown</span>
-                <Button type="submit" size="sm" disabled={!draft.trim() || comment.isPending}>
-                  <SendIcon />
-                  {t("actionComment")}
-                </Button>
+          {data.status !== "draft" ? (
+            <>
+            <section className="rounded-xl border border-reporter/25 bg-reporter/[0.03] p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="flex size-6 items-center justify-center rounded-md bg-reporter/15 text-reporter">
+                  <SparklesIcon className="size-3.5" />
+                </span>
+                <p className="text-sm font-medium">{t("ticketEvidenceTitle")}</p>
+                {data.evidence_at ? (
+                  <span
+                    className="ml-auto text-[11px] text-muted-foreground"
+                    title={absoluteTime(lang, data.evidence_at)}
+                  >
+                    {relativeTime(lang, data.evidence_at)}
+                  </span>
+                ) : null}
               </div>
-              {comment.isError ? (
-                <p className="text-sm text-destructive">{(comment.error as Error).message}</p>
-              ) : null}
-            </form>
+              {data.evidence ? (
+                <div className="mt-3 text-sm">
+                  <Markdown content={data.evidence} />
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">{t("ticketEvidenceMissing")}</p>
+              )}
+            </section>
+
+            <section className="rounded-xl border border-resolver/25 bg-resolver/[0.03] p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="flex size-6 items-center justify-center rounded-md bg-resolver/15 text-resolver">
+                  <WrenchIcon className="size-3.5" />
+                </span>
+                <p className="text-sm font-medium">{t("ticketResolutionTitle")}</p>
+                {data.resolution_at ? (
+                  <span
+                    className="ml-auto text-[11px] text-muted-foreground"
+                    title={absoluteTime(lang, data.resolution_at)}
+                  >
+                    {relativeTime(lang, data.resolution_at)}
+                  </span>
+                ) : null}
+              </div>
+              {data.resolution ? (
+                <div className="mt-3 text-sm">
+                  <Markdown content={data.resolution} />
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">{t("ticketResolutionMissing")}</p>
+              )}
+            </section>
+            </>
           ) : null}
 
           {canClose ? (
@@ -299,23 +252,30 @@ export function TicketPage() {
             title={t("ticketSidebarReporterAgent")}
             thread={threadInfo}
             loading={thread.isFetching}
-            canCreate={data.is_reporter && data.status !== "draft"}
+            canCreate={data.is_reporter && data.status === "open"}
             isDraft={data.status === "draft"}
             creating={createThread.isPending}
             onCreate={() => createThread.mutate()}
             connectHint={t("threadConnectHint")}
           />
 
-          <section className="rounded-xl border border-border/70 bg-card p-4">
+          <section className="rounded-xl border border-resolver/25 bg-resolver/[0.04] p-4">
             <div className="flex items-center gap-2">
-              <span className="flex size-6 items-center justify-center rounded-md bg-resolver/12 text-resolver">
+              <span className="flex size-6 items-center justify-center rounded-md bg-resolver/15 text-resolver">
                 <BotIcon className="size-3.5" />
               </span>
               <p className="text-sm font-medium">{t("ticketSidebarResolverAgent")}</p>
             </div>
-            {data.resolver_thread_url ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              {data.status === "draft"
+                ? t("resolverCardDraft")
+                : data.resolver_thread.thread_id
+                  ? t("resolverCardDispatched")
+                  : t("resolverCardNotDispatched")}
+            </p>
+            {data.resolver_thread.url ? (
               <a
-                href={data.resolver_thread_url}
+                href={data.resolver_thread.url}
                 target="_blank"
                 rel="noreferrer noopener"
                 className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
@@ -323,9 +283,27 @@ export function TicketPage() {
                 {t("resolverThreadLabel")}
                 <ExternalLinkIcon className="size-3" />
               </a>
-            ) : (
-              <p className="mt-2 text-xs text-muted-foreground">{t("resolverMissingHint")}</p>
-            )}
+            ) : data.resolver_thread.thread_id ? (
+              <p className="mt-2 text-[11px] text-muted-foreground">{t("resolverThreadOwnerNote")}</p>
+            ) : null}
+            {data.resolver_thread.error ? (
+              <p className="mt-2 text-[11px] text-destructive">{data.resolver_thread.error}</p>
+            ) : null}
+            {dispatchRetryable ? (
+              <Button
+                className="mt-2"
+                size="sm"
+                variant="outline"
+                disabled={dispatch.isPending}
+                onClick={() => dispatch.mutate()}
+              >
+                {dispatch.isPending ? <Loader2Icon className="animate-spin" /> : <SendIcon />}
+                {t("actionDispatch")}
+              </Button>
+            ) : null}
+            {dispatch.isError ? (
+              <p className="mt-2 text-[11px] text-destructive">{(dispatch.error as Error).message}</p>
+            ) : null}
           </section>
 
           <details className="rounded-xl border border-border/70 bg-card p-4">

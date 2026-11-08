@@ -4,7 +4,6 @@ pub mod crypto;
 pub mod cybion;
 pub mod db;
 pub mod error;
-pub mod machine;
 pub mod model;
 pub mod prompt;
 pub mod web;
@@ -107,20 +106,29 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Hands a comment to the reporter's Thread without blocking the HTTP response.
-pub fn spawn_reporter_progress(state: AppState, ticket_id: String, nudge: String) {
-    tokio::spawn(async move {
-        if let Err(error) = api::tickets::progress_reporter_thread(&state, &ticket_id, &nudge).await
-        {
-            tracing::warn!("推进报障 Thread 失败: {error}");
-        }
-    });
-}
-
 pub fn spawn_thread_creation(state: AppState, ticket_id: String) {
     tokio::spawn(async move {
         if let Err(error) = api::tickets::ensure_reporter_thread(&state, &ticket_id).await {
             tracing::warn!("创建报障 Thread 失败: {error}");
+        }
+    });
+}
+
+/// Pushes a submitted Ticket to the resolver Thread without blocking submit.
+/// A failure is recorded on the Ticket, where the owner can see and retry it.
+pub fn spawn_resolver_dispatch(state: AppState, ticket_id: String) {
+    tokio::spawn(async move {
+        if let Err(error) = api::tickets::dispatch_resolver(&state, &ticket_id).await {
+            tracing::warn!("派发修复 Thread 失败: {error}");
+        }
+    });
+}
+
+/// Sends one more message into a resolver Thread Tickets already opened.
+pub fn spawn_resolver_notice(state: AppState, ticket_id: String, note: String) {
+    tokio::spawn(async move {
+        if let Err(error) = api::tickets::notify_resolver(&state, &ticket_id, &note).await {
+            tracing::warn!("推进修复 Thread 失败: {error}");
         }
     });
 }

@@ -10,11 +10,11 @@ use crate::{
     AppState,
     api::{account, projects},
     auth::CurrentUser,
-    crypto::{hash_token, new_id, new_token, now},
+    crypto::{hash_token, new_id, new_token, now, token_hint},
     error::{AppError, AppResult},
     model::{
-        AgentEndpoint, CommentView, CreateComment, CreateTicket, ThreadView, TicketSummary,
-        TicketView, UpdateTicket,
+        AgentEndpoint, CreateTicket, ThreadInput, ThreadView, TicketSummary, TicketView,
+        UpdateTicket,
     },
 };
 
@@ -33,14 +33,20 @@ pub struct TicketRow {
     pub closed_at: Option<i64>,
     pub closed_by_kind: Option<String>,
     pub closed_by_user_id: Option<String>,
-    pub last_reporter_at: i64,
-    pub last_resolver_at: i64,
+    pub evidence: Option<String>,
+    pub evidence_at: Option<i64>,
+    pub resolution: Option<String>,
+    pub resolution_at: Option<i64>,
     pub reporter_thread_id: Option<String>,
     pub reporter_thread_owner: Option<String>,
     pub reporter_thread_error: Option<String>,
+    pub resolver_thread_id: Option<String>,
+    pub resolver_thread_owner: Option<String>,
+    pub resolver_thread_error: Option<String>,
+    pub resolver_dispatched_at: Option<i64>,
 }
 
-const TICKET_COLUMNS: &str = "SELECT id,project_id,number,reporter_user_id,title,body,status,created_at,updated_at,submitted_at,closed_at,closed_by_kind,closed_by_user_id,last_reporter_at,last_resolver_at,reporter_thread_id,reporter_thread_owner,reporter_thread_error FROM tickets";
+const TICKET_COLUMNS: &str = "SELECT id,project_id,number,reporter_user_id,title,body,status,created_at,updated_at,submitted_at,closed_at,closed_by_kind,closed_by_user_id,evidence,evidence_at,resolution,resolution_at,reporter_thread_id,reporter_thread_owner,reporter_thread_error,resolver_thread_id,resolver_thread_owner,resolver_thread_error,resolver_dispatched_at FROM tickets";
 
 impl TicketRow {
     fn from_row(row: &sqlx::sqlite::SqliteRow) -> Self {
@@ -58,11 +64,17 @@ impl TicketRow {
             closed_at: row.get(10),
             closed_by_kind: row.get(11),
             closed_by_user_id: row.get(12),
-            last_reporter_at: row.get(13),
-            last_resolver_at: row.get(14),
-            reporter_thread_id: row.get(15),
-            reporter_thread_owner: row.get(16),
-            reporter_thread_error: row.get(17),
+            evidence: row.get(13),
+            evidence_at: row.get(14),
+            resolution: row.get(15),
+            resolution_at: row.get(16),
+            reporter_thread_id: row.get(17),
+            reporter_thread_owner: row.get(18),
+            reporter_thread_error: row.get(19),
+            resolver_thread_id: row.get(20),
+            resolver_thread_owner: row.get(21),
+            resolver_thread_error: row.get(22),
+            resolver_dispatched_at: row.get(23),
         }
     }
 }
@@ -86,86 +98,6 @@ pub async fn display_name(state: &AppState, user_id: &str) -> AppResult<Option<S
     )
 }
 
-fn author_label(author_kind: &str, fallback: Option<&str>) -> String {
-    match author_kind {
-        "reporter_agent" => "报障 Agent".to_owned(),
-        "resolver_agent" => "修复 Agent".to_owned(),
-        "system" => "系统".to_owned(),
-        _ => fallback.unwrap_or("匿名用户").to_owned(),
-    }
-}
-
-pub async fn comments(state: &AppState, ticket_id: &str) -> AppResult<Vec<CommentView>> {
-    let rows = sqlx::query(
-        "SELECT c.id,c.kind,c.author_kind,c.author_user_id,COALESCE(u.display_name,c.author_label) AS name,c.body,c.created_at
-         FROM comments c LEFT JOIN users u ON u.id=c.author_user_id
-         WHERE c.ticket_id=? ORDER BY c.created_at ASC, c.rowid ASC",
-    )
-    .bind(ticket_id)
-    .fetch_all(&state.db)
-    .await?;
-    Ok(rows
-        .iter()
-        .map(|row| CommentView {
-            id: row.get(0),
-            kind: row.get(1),
-            author_kind: row.get(2),
-            author_user_id: row.get(3),
-            author_name: row.get(4),
-            body: row.get(5),
-            created_at: row.get(6),
-        })
-        .collect())
-}
-
-pub async fn insert_comment(
-    state: &AppState,
-    ticket_id: &str,
-    kind: &str,
-    author_kind: &str,
-    author_user_id: Option<&str>,
-    label: Option<&str>,
-    body: &str,
-) -> AppResult<String> {
-    let id = new_id();
-    let timestamp = now();
-    sqlx::query(
-        "INSERT INTO comments(id,ticket_id,kind,author_kind,author_user_id,author_label,body,created_at) VALUES(?,?,?,?,?,?,?,?)",
-    )
-    .bind(&id)
-    .bind(ticket_id)
-    .bind(kind)
-    .bind(author_kind)
-    .bind(author_user_id)
-    .bind(label)
-    .bind(body)
-    .bind(timestamp)
-    .execute(&state.db)
-    .await?;
-    let stamp_column = match author_kind {
-        "resolver_agent" => "last_resolver_at",
-        "reporter_agent" | "user" => "last_reporter_at",
-        _ => "",
-    };
-    if stamp_column.is_empty() {
-        sqlx::query("UPDATE tickets SET updated_at=? WHERE id=?")
-            .bind(timestamp)
-            .bind(ticket_id)
-            .execute(&state.db)
-            .await?;
-    } else {
-        sqlx::query(&format!(
-            "UPDATE tickets SET {stamp_column}=?, updated_at=? WHERE id=?"
-        ))
-        .bind(timestamp)
-        .bind(timestamp)
-        .bind(ticket_id)
-        .execute(&state.db)
-        .await?;
-    }
-    Ok(id)
-}
-
 #[derive(Deserialize)]
 pub struct StatusFilter {
     #[serde(default)]
@@ -186,8 +118,8 @@ fn summary_from_row(row: &sqlx::sqlite::SqliteRow) -> TicketSummary {
         reporter_name: row.get(7),
         created_at: row.get(8),
         updated_at: row.get(9),
-        comment_count: row.get(10),
-        has_evidence: row.get::<i64, _>(11) != 0,
+        has_evidence: row.get::<i64, _>(10) != 0,
+        has_resolution: row.get::<i64, _>(11) != 0,
         thread_id: row.get(12),
     }
 }
@@ -195,8 +127,8 @@ fn summary_from_row(row: &sqlx::sqlite::SqliteRow) -> TicketSummary {
 const SUMMARY_SELECT: &str = "
 SELECT t.id,t.project_id,p.name,t.number,t.title,t.status,t.reporter_user_id,u.display_name,
        t.created_at,t.updated_at,
-       (SELECT COUNT(*) FROM comments c WHERE c.ticket_id=t.id AND c.kind<>'system') AS comment_count,
-       (SELECT EXISTS(SELECT 1 FROM comments c WHERE c.ticket_id=t.id AND c.kind='evidence')) AS has_evidence,
+       (t.evidence IS NOT NULL AND t.evidence<>'') AS has_evidence,
+       (t.resolution IS NOT NULL AND t.resolution<>'') AS has_resolution,
        t.reporter_thread_id
 FROM tickets t
 JOIN projects p ON p.id=t.project_id
@@ -294,8 +226,8 @@ pub async fn create(
     .fetch_one(&mut *tx)
     .await?;
     sqlx::query(
-        "INSERT INTO tickets(id,project_id,number,reporter_user_id,title,body,status,created_at,updated_at,submitted_at,last_reporter_at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO tickets(id,project_id,number,reporter_user_id,title,body,status,created_at,updated_at,submitted_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?)",
     )
     .bind(&id)
     .bind(&project.id)
@@ -307,13 +239,13 @@ pub async fn create(
     .bind(timestamp)
     .bind(timestamp)
     .bind(if input.submit { Some(timestamp) } else { None })
-    .bind(timestamp)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
 
     if input.submit {
         crate::spawn_thread_creation(state.clone(), id.clone());
+        crate::spawn_resolver_dispatch(state.clone(), id.clone());
     }
     let ticket = load_ticket(&state, &id).await?;
     read(State(state), Extension(user), Path(ticket.id)).await
@@ -336,10 +268,11 @@ pub async fn read(
         ticket.closed_by_user_id.as_deref(),
     ) {
         (Some("user"), Some(uid)) => display_name(&state, uid).await?,
-        (Some(kind), _) => Some(author_label(kind, None)),
+        (Some(kind), _) => Some(crate::model::closer_label(kind)),
         _ => None,
     };
     let is_reporter = ticket.reporter_user_id == user.id;
+    let is_project_owner = project.owner_user_id == user.id;
     let reporter_thread = ThreadView {
         thread_id: ticket.reporter_thread_id.clone(),
         owner_user_id: ticket.reporter_thread_owner.clone(),
@@ -354,15 +287,29 @@ pub async fn read(
             .map(|thread_id| state.cybion.thread_url(thread_id)),
         error: ticket.reporter_thread_error.clone(),
     };
+    let resolver_thread = ThreadView {
+        thread_id: ticket.resolver_thread_id.clone(),
+        owner_user_id: ticket.resolver_thread_owner.clone(),
+        title: None,
+        status: None,
+        display_status: None,
+        context_tokens: None,
+        url: ticket
+            .resolver_thread_id
+            .as_ref()
+            .filter(|_| is_project_owner)
+            .map(|thread_id| state.cybion.thread_url(thread_id)),
+        error: ticket.resolver_thread_error.clone(),
+    };
     Ok(Json(TicketView {
         agent: AgentEndpoint {
             ticket_url: format!("{}/api/agent/tickets/{}", state.public_base_url, ticket.id),
-            comments_url: format!(
-                "{}/api/agent/tickets/{}/comments",
+            evidence_url: format!(
+                "{}/api/agent/tickets/{}/evidence",
                 state.public_base_url, ticket.id
             ),
-            close_url: format!(
-                "{}/api/agent/tickets/{}/close",
+            resolve_url: format!(
+                "{}/api/agent/tickets/{}/resolve",
                 state.public_base_url, ticket.id
             ),
         },
@@ -381,11 +328,14 @@ pub async fn read(
         closed_at: ticket.closed_at,
         closed_by_kind: ticket.closed_by_kind.clone(),
         closed_by_name,
+        evidence: ticket.evidence.clone(),
+        evidence_at: ticket.evidence_at,
+        resolution: ticket.resolution.clone(),
+        resolution_at: ticket.resolution_at,
         is_reporter,
-        is_project_owner: project.owner_user_id == user.id,
-        comments: comments(&state, &ticket.id).await?,
+        is_project_owner,
         reporter_thread,
-        resolver_thread_url: project.resolver_thread_url.clone(),
+        resolver_thread,
     }))
 }
 
@@ -436,60 +386,8 @@ pub async fn update(
     read(State(state), Extension(user), Path(id)).await
 }
 
-pub async fn comment(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(id): Path<String>,
-    Json(input): Json<CreateComment>,
-) -> AppResult<Json<TicketView>> {
-    let ticket = load_ticket(&state, &id).await?;
-    let project = projects::load_project(&state, &ticket.project_id).await?;
-    projects::require_view(&state, &project, &user.id).await?;
-    if ticket.status == "draft" && ticket.reporter_user_id != user.id {
-        return Err(AppError::not_found("工单不存在"));
-    }
-    let body = input.body.trim();
-    if body.is_empty() {
-        return Err(AppError::bad_request("评论不能为空"));
-    }
-    if body.chars().count() > 20_000 {
-        return Err(AppError::bad_request("评论不能超过 20000 个字符"));
-    }
-    insert_comment(
-        &state,
-        &ticket.id,
-        "comment",
-        "user",
-        Some(&user.id),
-        user.display_name.as_deref(),
-        body,
-    )
-    .await?;
-    // The reporter's Thread owns the investigation, so every comment is a new
-    // lead for it: wake it in the background instead of making the commenter
-    // wait on Cybion.
-    let role = if ticket.reporter_user_id == user.id {
-        "报障人"
-    } else if project.owner_user_id == user.id {
-        "项目所有者"
-    } else {
-        "其他成员"
-    };
-    let nudge = crate::prompt::comment_nudge(&crate::prompt::CommentNudge {
-        ticket_number: ticket.number,
-        author: user.display_name.as_deref().unwrap_or("匿名用户"),
-        role,
-        body,
-        closed: ticket.status == "closed",
-    });
-    // Someone else's comment cannot conjure a Thread on the reporter's behalf:
-    // only the reporter's own comment may create a missing one.
-    if ticket.reporter_thread_id.is_some() || ticket.reporter_user_id == user.id {
-        crate::spawn_reporter_progress(state.clone(), ticket.id.clone(), nudge);
-    }
-    read(State(state), Extension(user), Path(id)).await
-}
-
+/// Submitting is the hand-off: the Ticket enters the resolver's world, and the
+/// push happens right after the response (a slow Cybion must not hold it up).
 pub async fn submit(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -505,28 +403,16 @@ pub async fn submit(
         return Err(AppError::conflict("只有草稿可以提交"));
     }
     let timestamp = now();
-    sqlx::query(
-        "UPDATE tickets SET status='open', submitted_at=?, last_reporter_at=?, updated_at=? WHERE id=?",
-    )
-    .bind(timestamp)
-    .bind(timestamp)
-    .bind(timestamp)
-    .bind(&id)
-    .execute(&state.db)
-    .await?;
-    insert_comment(
-        &state,
-        &ticket.id,
-        "system",
-        "system",
-        None,
-        Some("报障人提交了工单"),
-        "工单已提交，等待修复 Agent 处理。",
-    )
-    .await?;
+    sqlx::query("UPDATE tickets SET status='open', submitted_at=?, updated_at=? WHERE id=?")
+        .bind(timestamp)
+        .bind(timestamp)
+        .bind(&id)
+        .execute(&state.db)
+        .await?;
     if ticket.reporter_thread_id.is_none() {
         crate::spawn_thread_creation(state.clone(), ticket.id.clone());
     }
+    crate::spawn_resolver_dispatch(state.clone(), ticket.id.clone());
     read(State(state), Extension(user), Path(id)).await
 }
 
@@ -542,23 +428,15 @@ pub async fn close(
     if !allowed {
         return Err(AppError::forbidden("只有报障人或项目所有者可以关闭工单"));
     }
-    close_ticket(
-        &state,
-        &ticket,
-        "user",
-        Some(&user.id),
-        user.display_name.as_deref().unwrap_or("用户"),
-    )
-    .await?;
+    close_ticket(&state, &ticket, "user", Some(&user.id)).await?;
     read(State(state), Extension(user), Path(id)).await
 }
 
 pub async fn close_ticket(
     state: &AppState,
     ticket: &TicketRow,
-    author_kind: &str,
+    kind: &str,
     user_id: Option<&str>,
-    label: &str,
 ) -> AppResult<()> {
     if ticket.status == "closed" {
         return Ok(());
@@ -568,25 +446,18 @@ pub async fn close_ticket(
         "UPDATE tickets SET status='closed', closed_at=?, closed_by_kind=?, closed_by_user_id=?, updated_at=? WHERE id=?",
     )
     .bind(timestamp)
-    .bind(author_kind)
+    .bind(kind)
     .bind(user_id)
     .bind(timestamp)
     .bind(&ticket.id)
     .execute(&state.db)
     .await?;
-    insert_comment(
-        state,
-        &ticket.id,
-        "system",
-        "system",
-        None,
-        Some("系统"),
-        &format!("**{label}** 关闭了工单。"),
-    )
-    .await?;
     Ok(())
 }
 
+/// Reopening puts the Ticket back in front of the same resolver Thread: its
+/// history is the context, so it only needs to be told what changed. A Ticket
+/// that never got a Thread (the push failed) is dispatched from scratch.
 pub async fn reopen(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -606,23 +477,48 @@ pub async fn reopen(
     }
     let timestamp = now();
     sqlx::query(
-        "UPDATE tickets SET status='open', closed_at=NULL, closed_by_kind=NULL, closed_by_user_id=NULL, last_reporter_at=?, updated_at=? WHERE id=?",
+        "UPDATE tickets SET status='open', closed_at=NULL, closed_by_kind=NULL, closed_by_user_id=NULL, updated_at=? WHERE id=?",
     )
-    .bind(timestamp)
     .bind(timestamp)
     .bind(&id)
     .execute(&state.db)
     .await?;
-    insert_comment(
-        &state,
-        &ticket.id,
-        "system",
-        "system",
-        None,
-        Some("系统"),
-        "工单被重新打开，等待修复 Agent 处理。",
-    )
-    .await?;
+    if ticket.resolver_thread_id.is_some() && ticket.resolver_thread_error.is_none() {
+        let note = crate::prompt::resolver_reopen_note(
+            ticket.number,
+            ticket.resolution.as_deref().unwrap_or_default(),
+        );
+        crate::spawn_resolver_notice(state.clone(), ticket.id.clone(), note);
+    } else {
+        crate::spawn_resolver_dispatch(state.clone(), ticket.id.clone());
+    }
+    read(State(state), Extension(user), Path(id)).await
+}
+
+/// Lets the project owner retry the push after fixing the reason it failed
+/// (no Worker selected, Cybion unreachable, key revoked).
+pub async fn dispatch(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(id): Path<String>,
+) -> AppResult<Json<TicketView>> {
+    let ticket = load_ticket(&state, &id).await?;
+    let project = projects::load_project(&state, &ticket.project_id).await?;
+    projects::require_view(&state, &project, &user.id).await?;
+    // A draft is nobody else's business: it answers 404 before ownership does.
+    if ticket.status == "draft" && ticket.reporter_user_id != user.id {
+        return Err(AppError::not_found("工单不存在"));
+    }
+    if project.owner_user_id != user.id {
+        return Err(AppError::forbidden("只有项目所有者可以重新派发工单"));
+    }
+    if ticket.status == "draft" {
+        return Err(AppError::conflict("草稿还没有提交，不能派发"));
+    }
+    if ticket.status == "closed" {
+        return Err(AppError::conflict("已关闭的工单不能派发"));
+    }
+    dispatch_resolver(&state, &ticket.id).await?;
     read(State(state), Extension(user), Path(id)).await
 }
 
@@ -660,7 +556,7 @@ pub async fn read_thread(
             error: ticket.reporter_thread_error.clone(),
         }));
     };
-    let live = match account::reporter_key(&state, &ticket.reporter_user_id).await? {
+    let live = match account::key_for(&state, &ticket.reporter_user_id).await? {
         Some(key) => state.cybion.read_thread(&key, &thread_id).await,
         None => Err("报障人还没有连接 Cybion 账号".to_owned()),
     };
@@ -716,9 +612,6 @@ pub async fn retry_thread(
     read_thread(State(state), Extension(user), Path(id)).await
 }
 
-/// Creates the reporter's Cybion Thread and hands it the investigation
-/// briefing. Safe to retry: it records failures on the Ticket instead of
-/// failing the caller's request.
 /// The ticket page polls this with the newest history id it has seen, so the
 /// Thread is read incrementally and a long investigation never re-transfers
 /// old evidence.
@@ -809,13 +702,12 @@ pub async fn live_thread(
 }
 
 /// A message the reporter types into the conversation. It goes straight into
-/// the Thread with their token, so the Agent answers in the same turn instead
-/// of waiting for a comment to be nudged in from the background.
+/// the Thread with their token, so the Agent answers in the same turn.
 pub async fn live_thread_input(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
     Path(id): Path<String>,
-    Json(input): Json<CreateComment>,
+    Json(input): Json<ThreadInput>,
 ) -> AppResult<Json<Value>> {
     let mut ticket = load_ticket(&state, &id).await?;
     let project = projects::load_project(&state, &ticket.project_id).await?;
@@ -852,18 +744,21 @@ pub async fn live_thread_input(
         .await
         .map_err(AppError::unavailable)?;
     // A successful turn proves the Thread is healthy again.
-    set_thread_error(&state, &ticket.id, None).await?;
+    set_reporter_error(&state, &ticket.id, None).await?;
     Ok(Json(json!({ "accepted": true })))
 }
 
+/// Creates the reporter's Cybion Thread and hands it the investigation
+/// briefing. Safe to retry: it records failures on the Ticket instead of
+/// failing the caller's request.
 pub async fn ensure_reporter_thread(state: &AppState, ticket_id: &str) -> AppResult<()> {
     let ticket = load_ticket(state, ticket_id).await?;
     if ticket.reporter_thread_id.is_some() {
         return Ok(());
     }
     let project = projects::load_project(state, &ticket.project_id).await?;
-    let Some(key) = account::reporter_key(state, &ticket.reporter_user_id).await? else {
-        set_thread_error(
+    let Some(key) = account::key_for(state, &ticket.reporter_user_id).await? else {
+        set_reporter_error(
             state,
             ticket_id,
             Some("报障人还没有连接 Cybion 账号，无法创建现场调查 Thread"),
@@ -893,7 +788,7 @@ pub async fn ensure_reporter_thread(state: &AppState, ticket_id: &str) -> AppRes
     {
         Ok(thread) => thread,
         Err(error) => {
-            set_thread_error(state, ticket_id, Some(&error)).await?;
+            set_reporter_error(state, ticket_id, Some(&error)).await?;
             return Err(AppError::unavailable(error));
         }
     };
@@ -905,7 +800,7 @@ pub async fn ensure_reporter_thread(state: &AppState, ticket_id: &str) -> AppRes
     .bind(&thread.id)
     .bind(&ticket.reporter_user_id)
     .bind(hash_token(&token))
-    .bind(crate::crypto::token_hint(&token))
+    .bind(token_hint(&token))
     .bind(ticket_id)
     .execute(&state.db)
     .await?;
@@ -924,7 +819,7 @@ pub async fn ensure_reporter_thread(state: &AppState, ticket_id: &str) -> AppRes
         token: &token,
     });
     if let Err(error) = state.cybion.post_input(&key, &thread.id, &briefing).await {
-        set_thread_error(
+        set_reporter_error(
             state,
             ticket_id,
             Some(&format!("Thread 已创建，但调查简报发送失败：{error}")),
@@ -934,43 +829,11 @@ pub async fn ensure_reporter_thread(state: &AppState, ticket_id: &str) -> AppRes
     Ok(())
 }
 
-/// Pushes a new message into the reporter's Thread, creating the Thread first
-/// when the Ticket never got one. Failures land on the Ticket so the UI can
-/// show them instead of losing the message silently.
-pub async fn progress_reporter_thread(
+async fn set_reporter_error(
     state: &AppState,
     ticket_id: &str,
-    nudge: &str,
+    error: Option<&str>,
 ) -> AppResult<()> {
-    ensure_reporter_thread(state, ticket_id).await?;
-    let ticket = load_ticket(state, ticket_id).await?;
-    let Some(thread_id) = ticket.reporter_thread_id.clone() else {
-        return Ok(());
-    };
-    let Some(key) = account::reporter_key(state, &ticket.reporter_user_id).await? else {
-        set_thread_error(
-            state,
-            ticket_id,
-            Some("报障人没有连接 Cybion，评论无法推进现场调查 Thread"),
-        )
-        .await?;
-        return Ok(());
-    };
-    match state.cybion.post_input(&key, &thread_id, nudge).await {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            set_thread_error(
-                state,
-                ticket_id,
-                Some(&format!("评论已记录，但推进现场调查 Thread 失败：{error}")),
-            )
-            .await?;
-            Err(AppError::unavailable(error))
-        }
-    }
-}
-
-async fn set_thread_error(state: &AppState, ticket_id: &str, error: Option<&str>) -> AppResult<()> {
     sqlx::query("UPDATE tickets SET reporter_thread_error=? WHERE id=?")
         .bind(error)
         .bind(ticket_id)
@@ -979,12 +842,177 @@ async fn set_thread_error(state: &AppState, ticket_id: &str, error: Option<&str>
     Ok(())
 }
 
+async fn set_resolver_error(
+    state: &AppState,
+    ticket_id: &str,
+    error: Option<&str>,
+) -> AppResult<()> {
+    sqlx::query("UPDATE tickets SET resolver_thread_error=? WHERE id=?")
+        .bind(error)
+        .bind(ticket_id)
+        .execute(&state.db)
+        .await?;
+    Ok(())
+}
+
+/// Pushes a submitted Ticket to the project owner's resolver Agent: one fresh
+/// Cybion Thread on the owner's account, opened with the full briefing. This is
+/// the whole hand-off — no queue, no schedule, no machine.
+///
+/// Failures are recorded on the Ticket (`resolver_thread_error`) so the owner
+/// can fix the cause and retry from the ticket page; the reporter's submit has
+/// already succeeded by then.
+pub async fn dispatch_resolver(state: &AppState, ticket_id: &str) -> AppResult<()> {
+    let ticket = load_ticket(state, ticket_id).await?;
+    if ticket.status != "open" {
+        return Ok(());
+    }
+    let project = projects::load_project(state, &ticket.project_id).await?;
+    // The only prerequisite: the owner's own Cybion account. No Worker to pick,
+    // no schedule to tune — the Thread uses whatever machine that account has,
+    // exactly like a Thread created from the Cybion UI.
+    let Some(key) = account::key_for(state, &project.owner_user_id).await? else {
+        set_resolver_error(
+            state,
+            ticket_id,
+            Some("项目所有者还没有连接 Cybion 账号，工单没有派发出去"),
+        )
+        .await?;
+        return Ok(());
+    };
+    let owner = display_name(state, &project.owner_user_id)
+        .await?
+        .unwrap_or_else(|| "项目所有者".to_owned());
+    let reporter = display_name(state, &ticket.reporter_user_id)
+        .await?
+        .unwrap_or_else(|| {
+            format!(
+                "用户 {}",
+                &ticket.reporter_user_id[..8.min(ticket.reporter_user_id.len())]
+            )
+        });
+    let ticket_url = format!("{}/#/tickets/{}", state.public_base_url, ticket.id);
+
+    // One Thread per Ticket: a previous attempt may have created it and failed
+    // to brief it, in which case the same Thread is reused and its token is
+    // rotated. A Thread that is already briefed is left alone.
+    let token = new_token();
+    let thread_id = match ticket.resolver_thread_id.clone() {
+        Some(thread_id) if ticket.resolver_thread_error.is_some() => {
+            sqlx::query(
+                "UPDATE tickets SET resolver_agent_token_hash=?, resolver_agent_token_hint=?, resolver_dispatched_at=? WHERE id=?",
+            )
+            .bind(hash_token(&token))
+            .bind(token_hint(&token))
+            .bind(now())
+            .bind(ticket_id)
+            .execute(&state.db)
+            .await?;
+            thread_id
+        }
+        Some(_) => return Ok(()),
+        None => {
+            let title = format!(
+                "[#{number}] {title}",
+                number = ticket.number,
+                title = crate::model::excerpt(&ticket.title, 80)
+            );
+            let created = match state.cybion.create_thread(&key, &title, &ticket_url).await {
+                Ok(thread) => thread,
+                Err(error) => {
+                    set_resolver_error(state, ticket_id, Some(&error)).await?;
+                    return Err(AppError::unavailable(error));
+                }
+            };
+            sqlx::query(
+                "UPDATE tickets SET resolver_thread_id=?, resolver_thread_owner=?, resolver_agent_token_hash=?, resolver_agent_token_hint=?, resolver_dispatched_at=? WHERE id=?",
+            )
+            .bind(&created.id)
+            .bind(&project.owner_user_id)
+            .bind(hash_token(&token))
+            .bind(token_hint(&token))
+            .bind(now())
+            .bind(ticket_id)
+            .execute(&state.db)
+            .await?;
+            created.id
+        }
+    };
+
+    let briefing = crate::prompt::resolver_briefing(&crate::prompt::ResolverBriefing {
+        ticket_number: ticket.number,
+        project_name: &project.name,
+        project_description: &project.description,
+        owner: &owner,
+        title: &ticket.title,
+        body: &ticket.body,
+        reporter: &reporter,
+        evidence: ticket.evidence.as_deref().unwrap_or_default(),
+        api_base: &state.public_base_url,
+        ticket_id: &ticket.id,
+        ticket_url: &ticket_url,
+        token: &token,
+    });
+    match state.cybion.post_input(&key, &thread_id, &briefing).await {
+        Ok(()) => {
+            set_resolver_error(state, ticket_id, None).await?;
+            Ok(())
+        }
+        Err(error) => {
+            set_resolver_error(
+                state,
+                ticket_id,
+                Some(&format!("修复 Thread 已就绪，但派单简报发送失败：{error}")),
+            )
+            .await?;
+            Err(AppError::unavailable(error))
+        }
+    }
+}
+
+/// Sends one more message into the resolver Thread Tickets already opened — on
+/// a reopen, or when new evidence lands. The Thread keeps its history, so this
+/// is a nudge rather than a new assignment.
+pub async fn notify_resolver(state: &AppState, ticket_id: &str, note: &str) -> AppResult<()> {
+    let ticket = load_ticket(state, ticket_id).await?;
+    let Some(thread_id) = ticket.resolver_thread_id.clone() else {
+        return Ok(());
+    };
+    let project = projects::load_project(state, &ticket.project_id).await?;
+    let Some(key) = account::key_for(state, &project.owner_user_id).await? else {
+        set_resolver_error(
+            state,
+            ticket_id,
+            Some("项目所有者还没有连接 Cybion 账号，无法推进修复 Thread"),
+        )
+        .await?;
+        return Ok(());
+    };
+    match state.cybion.post_input(&key, &thread_id, note).await {
+        Ok(()) => {
+            sqlx::query("UPDATE tickets SET resolver_thread_error=NULL WHERE id=?")
+                .bind(ticket_id)
+                .execute(&state.db)
+                .await?;
+            Ok(())
+        }
+        Err(error) => {
+            set_resolver_error(
+                state,
+                ticket_id,
+                Some(&format!("推进修复 Thread 失败：{error}")),
+            )
+            .await?;
+            Err(AppError::unavailable(error))
+        }
+    }
+}
+
 /// Shared by the browser UI and the agent API so both sides describe a Ticket
 /// the same way.
 pub async fn agent_view(state: &AppState, ticket_id: &str) -> AppResult<Value> {
     let ticket = load_ticket(state, ticket_id).await?;
     let project = projects::load_project(state, &ticket.project_id).await?;
-    let comments = comments(state, ticket_id).await?;
     Ok(json!({
         "id": ticket.id,
         "number": ticket.number,
@@ -993,8 +1021,12 @@ pub async fn agent_view(state: &AppState, ticket_id: &str) -> AppResult<Value> {
         "status": ticket.status,
         "project": project.name,
         "reporter": display_name(state, &ticket.reporter_user_id).await?,
+        "url": format!("{}/#/tickets/{}", state.public_base_url, ticket.id),
+        "evidence": ticket.evidence,
+        "evidence_at": ticket.evidence_at,
+        "resolution": ticket.resolution,
+        "resolution_at": ticket.resolution_at,
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
-        "comments": comments,
     }))
 }

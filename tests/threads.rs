@@ -170,19 +170,29 @@ async fn each_ticket_gets_its_reporters_own_key_and_a_hashed_token() {
     wait_for_thread(&alice, &alice_id).await;
     wait_for_thread(&bob, &bob_id).await;
 
-    // Every Thread is created with the reporter's own key, never a shared one.
-    let creates = env.mock.calls_to("/v1/threads");
-    assert_eq!(creates.len(), 2);
-    assert_eq!(creates[0].bearer.as_deref(), Some(ALICE_KEY));
-    assert_eq!(creates[1].bearer.as_deref(), Some(BOB_KEY));
-    assert_eq!(creates[0].body["title"], "[#1] 回调超时");
-    assert_eq!(
-        creates[0].body["external_ref"],
-        format!("{PUBLIC_BASE}/#/tickets/{alice_id}")
-    );
+    // Every investigation Thread is created with the reporter's own key, never
+    // a shared one. (A submitted ticket also opens a resolver Thread on the
+    // owner's key, so the two sides are told apart by their `external_ref`.)
+    let create_for = |ticket: &str| {
+        env.mock
+            .calls_to("/v1/threads")
+            .into_iter()
+            .find(|call| {
+                call.body["external_ref"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .ends_with(ticket)
+            })
+            .unwrap_or_else(|| panic!("工单 {ticket} 没有创建 Thread"))
+    };
+    let alice_thread = create_for(&alice_id);
+    assert_eq!(alice_thread.bearer.as_deref(), Some(ALICE_KEY));
+    assert_eq!(alice_thread.body["title"], "[#1] 回调超时");
+    let bob_thread = create_for(&bob_id);
+    assert_eq!(bob_thread.bearer.as_deref(), Some(BOB_KEY));
 
     // The briefing hands the Thread the ticket, the API base and its token.
-    let briefing = env.mock.briefing_for(&alice_id);
+    let briefing = env.mock.reporter_briefing(&alice_id);
     assert!(briefing.contains(&alice_id));
     assert!(briefing.contains("支付网关"));
     assert!(briefing.contains(PUBLIC_BASE));
@@ -210,13 +220,20 @@ async fn each_ticket_gets_its_reporters_own_key_and_a_hashed_token() {
         .unwrap();
     assert_eq!(stored, "alice");
     let view = alice.ticket(&alice_id).await;
+    let thread_id = view["reporter_thread"]["thread_id"]
+        .as_str()
+        .expect("报障 Thread");
     assert_eq!(
         view["reporter_thread"]["url"],
-        format!("{}/#/threads/thread-0001", env.mock.base)
+        format!("{}/#/threads/{thread_id}", env.mock.base)
     );
     assert_eq!(
-        view["agent"]["comments_url"],
-        format!("{PUBLIC_BASE}/api/agent/tickets/{alice_id}/comments")
+        view["agent"]["evidence_url"],
+        format!("{PUBLIC_BASE}/api/agent/tickets/{alice_id}/evidence")
+    );
+    assert_eq!(
+        view["agent"]["resolve_url"],
+        format!("{PUBLIC_BASE}/api/agent/tickets/{alice_id}/resolve")
     );
 }
 
@@ -233,6 +250,11 @@ async fn only_the_reporter_sees_the_thread_link() {
     let id = ticket["id"].as_str().unwrap().to_owned();
     wait_for_thread(&reporter, &id).await;
 
+    let thread_id = reporter.ticket(&id).await["reporter_thread"]["thread_id"]
+        .as_str()
+        .expect("报障 Thread")
+        .to_owned();
+
     let (status, live) = reporter.get(&format!("/api/tickets/{id}/thread")).await;
     assert_eq!(status, StatusCode::OK, "{live}");
     assert_eq!(live["title"], "[#1] 节点离线");
@@ -240,12 +262,12 @@ async fn only_the_reporter_sees_the_thread_link() {
     assert_eq!(live["context_tokens"], 4321);
     assert_eq!(
         live["url"],
-        format!("{}/#/threads/thread-0001", env.mock.base)
+        format!("{}/#/threads/{thread_id}", env.mock.base)
     );
     // The probe used the reporter's own key.
     let probe = env
         .mock
-        .calls_to("/v1/threads/thread-0001")
+        .calls_to(&format!("/v1/threads/{thread_id}"))
         .into_iter()
         .last()
         .expect("应当探测过 Thread");
@@ -254,7 +276,7 @@ async fn only_the_reporter_sees_the_thread_link() {
     // Anyone signed in can read an open ticket, but never the Thread link.
     let (status, seen) = observer.get(&format!("/api/tickets/{id}/thread")).await;
     assert_eq!(status, StatusCode::OK, "{seen}");
-    assert_eq!(seen["thread_id"], "thread-0001");
+    assert_eq!(seen["thread_id"], thread_id);
     assert!(seen["url"].is_null());
 
     // A Cybion outage surfaces on the card instead of breaking the page.
@@ -270,24 +292,8 @@ async fn only_the_reporter_sees_the_thread_link() {
     assert!(broken["url"].is_string());
 }
 
-/// Polls the mock until the Thread receives an input containing `needle`.
-async fn wait_for_input(env: &Env, thread_id: &str, needle: &str) -> Call {
-    let path = format!("/v1/threads/{thread_id}/inputs");
-    for _ in 0..200 {
-        if let Some(call) = env.mock.calls_to(&path).into_iter().find(|call| {
-            call.body["input"]
-                .as_str()
-                .is_some_and(|input| input.contains(needle))
-        }) {
-            return call;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    panic!("Thread {thread_id} 没有收到包含「{needle}」的输入");
-}
-
 #[tokio::test]
-async fn a_comment_wakes_the_reporter_thread() {
+async fn the_reporter_token_writes_evidence_with_the_reporters_own_key() {
     let env = Env::new().await;
     let alice = env.app("alice").await;
     connect(&alice, ALICE_KEY).await;
@@ -297,25 +303,18 @@ async fn a_comment_wakes_the_reporter_thread() {
         .create_ticket(&project, "支付回调 502", "线上回调偶发 502", true)
         .await;
     let id = ticket["id"].as_str().expect("工单 id").to_owned();
-    let ready = wait_for_thread(&alice, &id).await;
-    let thread_id = ready["reporter_thread"]["thread_id"]
-        .as_str()
-        .expect("thread id")
-        .to_owned();
+    wait_for_thread(&alice, &id).await;
+    let token = extract_agent_token(&env.mock.reporter_briefing(&id));
 
-    alice.comment(&id, "补充：只在凌晨批量对账时出现").await;
-
-    let nudge = wait_for_input(&env, &thread_id, "只在凌晨批量对账时出现").await;
-    let text = nudge.body["input"].as_str().unwrap();
-    assert!(text.contains("报障人"), "评论唤醒没有标明角色: {text}");
+    let (status, body) = alice
+        .evidence(&token, &id, "### 关键证据\n回调日志 30s 超时")
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let written = alice.ticket(&id).await;
+    assert_eq!(written["evidence"], "### 关键证据\n回调日志 30s 超时");
     assert!(
-        text.contains(&format!("#{}", ready["number"])),
-        "缺少工单号: {text}"
-    );
-    assert_eq!(
-        nudge.bearer.as_deref(),
-        Some(ALICE_KEY),
-        "唤醒必须用报障人自己的 Key"
+        written["evidence_at"].is_i64(),
+        "写回证据要带时间: {written}"
     );
 }
 
@@ -340,7 +339,7 @@ async fn the_briefing_carries_the_project_description() {
     let id = ticket["id"].as_str().expect("工单 id").to_owned();
     wait_for_thread(&alice, &id).await;
 
-    let briefing = env.mock.briefing_for(&id);
+    let briefing = env.mock.reporter_briefing(&id);
     assert!(
         briefing.contains("支付网关与对账回调，夜里跑批"),
         "简报缺少项目描述: {briefing}"
@@ -552,7 +551,7 @@ async fn opening_a_draft_starts_its_thread_once() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body["thread"]["thread_id"].is_string(), "{body}");
     assert_eq!(env.mock.thread_count(), 1);
-    let briefing = env.mock.briefing_for(&ticket_id);
+    let briefing = env.mock.reporter_briefing(&ticket_id);
     assert!(briefing.contains("草稿"), "{briefing}");
     assert!(briefing.contains("<!-- tickets-briefing -->"), "{briefing}");
 

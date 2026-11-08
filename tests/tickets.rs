@@ -24,12 +24,7 @@ async fn drafts_are_visible_only_to_their_reporter() {
     // Another user cannot read, comment on, or probe the Thread of a draft.
     let (status, _) = bob.get(&format!("/api/tickets/{id}")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = bob
-        .post(
-            &format!("/api/tickets/{id}/comments"),
-            Some(json!({ "body": "看到了" })),
-        )
-        .await;
+    let (status, _) = bob.post(&format!("/api/tickets/{id}/dispatch"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, _) = bob.get(&format!("/api/tickets/{id}/thread")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -93,7 +88,7 @@ async fn the_first_message_names_a_new_ticket() {
 }
 
 #[tokio::test]
-async fn submitting_opens_the_ticket_and_puts_it_in_the_queue() {
+async fn submitting_opens_the_ticket_and_hands_it_to_the_resolver() {
     let env = Env::new().await;
     let owner = env.app("owner").await;
     let reporter = env.app("reporter").await;
@@ -110,8 +105,6 @@ async fn submitting_opens_the_ticket_and_puts_it_in_the_queue() {
     assert_eq!(submitted["status"], "open");
     assert!(submitted["submitted_at"].is_i64());
     assert!(submitted["body"].as_str().unwrap().contains("2 小时"));
-    let comments = submitted["comments"].as_array().unwrap();
-    assert_eq!(comments.last().unwrap()["kind"], "system");
 
     // A second submit is a conflict, not a silent no-op.
     let (status, _) = reporter
@@ -129,17 +122,6 @@ async fn submitting_opens_the_ticket_and_puts_it_in_the_queue() {
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-
-    let key = owner.create_resolver_key(&project).await;
-    let (status, queue) = owner
-        .call_with(Some(&key), "GET", "/api/agent/queue", None)
-        .await;
-    assert_eq!(status, StatusCode::OK, "{queue}");
-    assert_eq!(queue["total_open"], 1);
-    let pending = queue["pending"].as_array().unwrap();
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0]["id"], *id);
-    assert_eq!(pending[0]["number"], 1);
 }
 
 #[tokio::test]
@@ -169,22 +151,19 @@ async fn closing_and_reopening_follow_the_permission_matrix() {
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
-    // The reporter closes it; closing twice adds no second audit comment.
+    // The reporter closes it; closing twice is a no-op, not an error.
     let (status, closed) = reporter
         .post(&format!("/api/tickets/{id}/close"), None)
         .await;
     assert_eq!(status, StatusCode::OK, "{closed}");
     assert_eq!(closed["status"], "closed");
     assert_eq!(closed["closed_by_kind"], "user");
-    let comments_after_first = closed["comments"].as_array().unwrap().len();
+    assert!(closed["closed_at"].is_i64());
     let (status, closed_again) = reporter
         .post(&format!("/api/tickets/{id}/close"), None)
         .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        closed_again["comments"].as_array().unwrap().len(),
-        comments_after_first
-    );
+    assert_eq!(closed_again["closed_at"], closed["closed_at"]);
 
     // A closed ticket is frozen until it is reopened.
     let (status, _) = reporter
@@ -222,38 +201,24 @@ async fn project_settings_belong_to_the_owner() {
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let (status, _) = other
-        .post(&format!("/api/projects/{project}/resolver-key"), None)
-        .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-
-    // A pasted Cybion link is normalised, a bare id is kept, junk is rejected.
+    // Visibility is an owner decision too.
     let (status, project_view) = owner
         .patch(
             &format!("/api/projects/{project}"),
-            json!({ "resolver_thread_url": "https://cybion.test/#/threads/abc-123" }),
+            json!({ "visibility": "public", "description": "公开队列" }),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{project_view}");
-    assert_eq!(
-        project_view["resolver_thread_url"],
-        "https://cybion.test/#/threads/abc-123"
-    );
-    let (status, project_view) = owner
-        .patch(
-            &format!("/api/projects/{project}"),
-            json!({ "resolver_thread_url": "abc-123" }),
-        )
-        .await;
+    assert_eq!(project_view["visibility"], "public");
+    assert_eq!(project_view["description"], "公开队列");
+    let (status, _) = stranger_for(&env, &project).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(project_view["resolver_thread_url"], "abc-123");
-    let (status, _) = owner
-        .patch(
-            &format!("/api/projects/{project}"),
-            json!({ "resolver_thread_url": "https://example.com/not-a-thread" }),
-        )
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// A public project answers a stranger; a private one hides itself.
+async fn stranger_for(env: &Env, project: &str) -> (StatusCode, serde_json::Value) {
+    let stranger = env.app("stranger").await;
+    stranger.get(&format!("/api/projects/{project}")).await
 }
 
 #[tokio::test]

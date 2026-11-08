@@ -97,10 +97,6 @@ async fn a_grant_opens_a_private_project_for_one_user() {
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let (status, _) = bob
-        .post(&format!("/api/projects/{id}/resolver-key"), None)
-        .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
 
     // Revoking the grant closes the door again.
     let (status, removed) = alice
@@ -139,13 +135,14 @@ async fn public_projects_are_open_to_every_signed_in_user() {
         .create_ticket(&id, "页面白屏", "打开项目页什么都没有", true)
         .await;
     let ticket_id = ticket["id"].as_str().unwrap().to_owned();
-    let (status, body) = bob
-        .post(
-            &format!("/api/tickets/{ticket_id}/comments"),
-            Some(json!({ "body": "补一张截图" })),
-        )
-        .await;
+    // Participation means filing and reading; dispatching stays with the owner.
+    let (status, body) = bob.get(&format!("/api/tickets/{ticket_id}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = bob
+        .post(&format!("/api/tickets/{ticket_id}/dispatch"), None)
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(error_message(&body), "只有项目所有者可以重新派发工单");
 
     // Public means "can read and report", not "can administer".
     let (status, _) = bob

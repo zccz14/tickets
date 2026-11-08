@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { ChevronLeftIcon, MessageSquareIcon, PaperclipIcon, PlusIcon, SettingsIcon } from "lucide-react"
+import { CheckCircle2Icon, ChevronLeftIcon, PaperclipIcon, PlusIcon, SettingsIcon } from "lucide-react"
 import { useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 
@@ -118,23 +118,29 @@ export function ProjectPage() {
               className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/40"
             >
               <StatusBadge status={ticket.status} />
-              <span className="hidden shrink-0 font-mono text-xs text-muted-foreground sm:inline">
+              <span className="max-sm:hidden shrink-0 font-mono text-xs text-muted-foreground">
                 #{ticket.number}
               </span>
               <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                 {ticket.title}
               </span>
               {ticket.has_evidence ? (
-                <span className="hidden shrink-0 items-center gap-1 rounded-md border border-reporter/25 bg-reporter/8 px-1.5 py-0.5 text-[10px] text-reporter sm:inline-flex">
-                  <PaperclipIcon className="size-2.5" />
-                  证据
+                <span className="max-sm:hidden shrink-0">
+                  <span className="inline-flex items-center gap-1 rounded-md border border-reporter/25 bg-reporter/8 px-1.5 py-0.5 text-[10px] text-reporter">
+                    <PaperclipIcon className="size-2.5" />
+                    {t("ticketEvidenceBadge")}
+                  </span>
                 </span>
               ) : null}
-              <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                <MessageSquareIcon className="size-3.5" />
-                {ticket.comment_count}
-              </span>
-              <span className="hidden w-20 shrink-0 text-right text-xs text-muted-foreground sm:inline">
+              {ticket.has_resolution ? (
+                <span className="max-sm:hidden shrink-0">
+                  <span className="inline-flex items-center gap-1 rounded-md border border-resolver/25 bg-resolver/8 px-1.5 py-0.5 text-[10px] text-resolver">
+                    <CheckCircle2Icon className="size-2.5" />
+                    {t("ticketResolutionBadge")}
+                  </span>
+                </span>
+              ) : null}
+              <span className="max-sm:hidden w-20 shrink-0 text-right text-xs text-muted-foreground">
                 {relativeTime(lang, ticket.updated_at)}
               </span>
             </button>

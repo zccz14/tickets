@@ -27,16 +27,19 @@ pub struct CurrentUser {
     pub token: Option<String>,
 }
 
-/// Which side of a Ticket an agent token speaks for.
+/// Which side of a Ticket an agent token speaks for. Both sides are bound to
+/// exactly one Ticket: a reporter token to the Ticket it investigates, a
+/// resolver token to the Ticket it was pushed for. There is no project-wide
+/// scope because there is no queue to read.
 #[derive(Clone, Debug)]
 pub enum AgentScope {
-    /// Bound to exactly one Ticket: the reporter's investigation Thread.
+    /// The reporter's investigation Thread.
     Reporter {
         ticket_id: String,
         reporter_user_id: String,
     },
-    /// Bound to one project: the resolver Ultimate Machine.
-    Resolver { project_id: String },
+    /// The resolver Thread that Tickets opened for this Ticket.
+    Resolver { ticket_id: String },
 }
 
 #[derive(Clone, Debug)]
@@ -187,9 +190,10 @@ pub async fn upsert_user(
     })
 }
 
-/// Agent authentication. One bearer-token space, two kinds of token: a Ticket's
-/// reporter token and a project's resolver key. The token itself is never
-/// stored — only its SHA-256 — so a database leak cannot mint agent calls.
+/// Agent authentication. One bearer-token space, two kinds of token, both bound
+/// to a single Ticket: the reporter token and the resolver token Tickets mints
+/// when it pushes the Ticket. The token itself is never stored — only its
+/// SHA-256 — so a database leak cannot mint agent calls.
 pub async fn require_agent(
     State(state): State<AppState>,
     mut request: Request,
@@ -229,17 +233,20 @@ async fn resolve_agent(state: &AppState, hash: &str) -> AppResult<AgentIdentity>
             label: format!("报障 Agent · #{number}"),
         });
     }
-    let project = sqlx::query("SELECT id,name FROM projects WHERE resolver_key_hash=?")
-        .bind(hash)
-        .fetch_optional(&state.db)
-        .await?;
-    if let Some(row) = project {
-        let name: String = row.get(1);
+    let resolver = sqlx::query(
+        "SELECT t.id,t.number,p.name FROM tickets t JOIN projects p ON p.id=t.project_id WHERE t.resolver_agent_token_hash=?",
+    )
+    .bind(hash)
+    .fetch_optional(&state.db)
+    .await?;
+    if let Some(row) = resolver {
+        let number: i64 = row.get(1);
+        let project: String = row.get(2);
         return Ok(AgentIdentity {
             scope: AgentScope::Resolver {
-                project_id: row.get(0),
+                ticket_id: row.get(0),
             },
-            label: format!("修复 Agent · {name}"),
+            label: format!("修复 Agent · {project} #{number}"),
         });
     }
     Err(AppError::unauthorized(

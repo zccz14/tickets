@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { BotIcon, CircleAlertIcon, Loader2Icon } from "lucide-react"
-import { useEffect, useRef } from "react"
+import { Component, useEffect, useRef, type ReactNode } from "react"
 import { CybionThreadProvider, CybionThreadView } from "@zccz14/cybion-components"
 
 import { Button } from "@/components/ui/button"
@@ -24,6 +24,32 @@ type LiveThread = {
  * The Thread belongs to the reporter and runs on their Cybion account, so the
  * browser talks to Cybion with that person's Auth Mini token.
  */
+/**
+ * The embedded Cybion view is third-party code inside our page: if it throws,
+ * the ticket must not go blank with it. Errors stay inside this card.
+ */
+class PanelBoundary extends Component<
+  { fallback: string; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="flex min-h-[10rem] flex-1 items-center justify-center px-4 py-4 text-sm text-muted-foreground">
+          {this.props.fallback}
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export function ThreadLivePanel({
   ticketId,
   thread,
@@ -45,15 +71,15 @@ export function ThreadLivePanel({
   // A draft has no Thread until its reporter opens it. This read is what starts
   // the investigation, and it keeps polling only until the Thread exists.
   const ensure = useQuery({
-    queryKey: ["ticket-thread", ticketId],
+    queryKey: ["ticket-thread-live", ticketId],
     queryFn: () => request<LiveThread>(`/api/tickets/${ticketId}/thread/live?after=0`),
     refetchInterval: thread.thread_id ? false : 2500,
     enabled: status !== "closed",
   })
 
-  const threadId = ensure.data?.thread.thread_id ?? thread.thread_id
+  const threadId = ensure.data?.thread?.thread_id ?? thread.thread_id
   // Only a creation failure belongs here; the sidebar's probe error is its own.
-  const threadError = ensure.data?.thread.error ?? thread.error
+  const threadError = ensure.data?.thread?.error ?? thread.error
 
   // The rest of the page still shows the old "no Thread" state until its own
   // queries refresh, so a freshly started Thread has to wake them.
@@ -76,6 +102,7 @@ export function ThreadLivePanel({
         </div>
       </header>
 
+      <PanelBoundary fallback={t("threadLiveFailed")}>
       {threadId ? (
         <CybionThreadProvider
           baseUrl={cybionBaseUrl}
@@ -117,6 +144,7 @@ export function ThreadLivePanel({
           )}
         </div>
       )}
+      </PanelBoundary>
     </section>
   )
 }
