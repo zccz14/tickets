@@ -38,6 +38,7 @@ pub struct MockState {
     threads: Mutex<Vec<String>>,
     thread_titles: Mutex<HashMap<String, String>>,
     create_status: Mutex<u16>,
+    context_status: Mutex<u16>,
     input_status: Mutex<u16>,
     read_status: Mutex<u16>,
     seq: Mutex<u64>,
@@ -68,6 +69,10 @@ impl MockCybion {
 
     pub fn fail_create_with(&self, status: u16) {
         *self.state.create_status.lock().unwrap() = status;
+    }
+
+    pub fn fail_context_with(&self, status: u16) {
+        *self.state.context_status.lock().unwrap() = status;
     }
 
     pub fn fail_input_with(&self, status: u16) {
@@ -118,28 +123,35 @@ impl MockCybion {
             .collect()
     }
 
+    /// Every context block Tickets pushed into a Thread, oldest first.
+    pub fn contexts(&self) -> Vec<String> {
+        self.calls()
+            .into_iter()
+            .filter(|call| call.path.ends_with("/context"))
+            .filter_map(|call| call.body["content"].as_str().map(str::to_owned))
+            .collect()
+    }
+
     /// The investigation briefing the reporter's Thread received.
     pub fn reporter_briefing(&self, ticket_id: &str) -> String {
-        self.inputs()
+        self.contexts()
             .into_iter()
-            .find(|input| input.contains("<!-- tickets-briefing -->") && input.contains(ticket_id))
+            .find(|context| context.contains("现场调查简报") && context.contains(ticket_id))
             .unwrap_or_else(|| panic!("没有找到工单 {ticket_id} 的报障简报"))
     }
 
     /// The dispatch Tickets pushed to the owner's resolver Thread.
     pub fn resolver_briefing(&self, ticket_id: &str) -> String {
-        self.inputs()
+        self.contexts()
             .into_iter()
-            .find(|input| {
-                input.contains("<!-- tickets-resolver-briefing -->") && input.contains(ticket_id)
-            })
+            .find(|context| context.contains("修复简报") && context.contains(ticket_id))
             .unwrap_or_else(|| panic!("没有找到工单 {ticket_id} 的修复简报"))
     }
 
     pub fn try_resolver_briefing(&self, ticket_id: &str) -> Option<String> {
-        self.inputs().into_iter().find(|input| {
-            input.contains("<!-- tickets-resolver-briefing -->") && input.contains(ticket_id)
-        })
+        self.contexts()
+            .into_iter()
+            .find(|context| context.contains("修复简报") && context.contains(ticket_id))
     }
 
     /// The most recent message pushed into a Thread, whatever it says.
@@ -190,6 +202,29 @@ async fn create_thread(
         "context_tokens": 1234
     }))
     .into_response()
+}
+
+async fn post_context(
+    State(state): State<Arc<MockState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    state.calls.lock().unwrap().push(Call {
+        method: "POST".to_owned(),
+        path: format!("/v1/threads/{id}/context"),
+        bearer: bearer(&headers),
+        body: body.clone(),
+    });
+    let status = *state.context_status.lock().unwrap();
+    if status != 0 {
+        return (
+            StatusCode::from_u16(status).unwrap(),
+            Json(json!({ "error": "mock context failure" })),
+        )
+            .into_response();
+    }
+    Json(json!({ "thread_id": id, "record_idx": 1 })).into_response()
 }
 
 async fn post_input(
@@ -281,6 +316,7 @@ pub async fn start_mock_cybion() -> MockCybion {
     let state = Arc::new(MockState::default());
     let app = Router::new()
         .route("/v1/threads", post(create_thread))
+        .route("/v1/threads/{id}/context", post(post_context))
         .route("/v1/threads/{id}/inputs", post(post_input))
         .route("/v1/threads/{id}", get(read_thread))
         .route("/api/threads/{id}/history", get(browser_history))

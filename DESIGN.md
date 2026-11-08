@@ -104,7 +104,7 @@ tk_ + 24 字节随机数的 hex（共 51 字符）
 
 - **身份**：Tickets 不透传自己的服务身份，而是把这次浏览器请求的 Auth Mini 访问令牌原样转给 Cybion；Thread 的 owner 是报障人，所以只有报障人的令牌读得到。项目所有者访问 live 接口得到 403。
 - **增量**：前端保存已见记录的最大 `id`，下一次只取更大的记录；进行中的回复单独读 `/response`。
-- **内部提示词**：简报与推进提示分别带 `<!-- tickets-briefing -->`、`<!-- tickets-resolver-* -->` 标记，前端据此把它们从对话里过滤掉。
+- **上下文注入**：简报与派单文本走 `POST /v1/threads/{id}/context`，Cybion 存成 activity 记录、回放为 developer 消息，对话里默认折叠；随后一条短 input（报障人的开场话）才启动推理。推进提示仍是 input，因为它必须唤醒下一轮。
 - **草稿**：`live` 首次读取时若工单是草稿且没有 Thread、也没有历史错误，会调用 `ensure_reporter_thread`，把「打开草稿」变成「开始调查」；失败会记录错误，因此不会在轮询里反复重试。
 
 ### 项目可见性
@@ -140,7 +140,8 @@ Cybion 的 `/v1/threads` 按 API Key 的 owner 隔离，服务端拿一把公共
 | 调用 | 路径 | 用途 |
 | --- | --- | --- |
 | `create_thread` | `POST /v1/threads` | 建 Thread，带 `title` 与 `external_ref` |
-| `post_input` | `POST /v1/threads/{id}/inputs` | 投递简报 / 推进消息 |
+| `append_context` | `POST /v1/threads/{id}/context` | 写入折叠简报：activity 记录、回放为 developer 消息，不触发推理 |
+| `post_input` | `POST /v1/threads/{id}/inputs` | 发开场消息 / 推进消息，触发推理 |
 | `read_thread` | `GET /v1/threads/{id}` | 实时读状态与上下文用量 |
 | `probe_key` | `GET /v1/threads/000…0` | 连接账号时验证 Key：401 才算无效 |
 
@@ -160,7 +161,7 @@ Cybion 的 `/v1/threads` 按 API Key 的 owner 隔离，服务端拿一把公共
 2. 取**项目所有者**的 Cybion Key。没有 Key 就把「所有者还没有连接 Cybion 账号」写进 `tickets.resolver_thread_error` 并返回——提交本身已经成功，不因为派发失败而回滚；
 3. 已经有一张修复 Thread 且没有错误时什么都不做；有错误时复用那张 Thread 并轮换令牌；
 4. 否则用所有者的 Key 建 Thread（标题 `[#N] …`，`external_ref` 指向工单页），落库 Thread id / owner / 令牌哈希 / `resolver_dispatched_at`；
-5. 投递派单简报；投递失败同样记在 `resolver_thread_error` 上，等所有者重试。
+5. 写入派单上下文（简报）、再发一条开场消息；任一步失败都记在 `resolver_thread_error` 上，等所有者重试。
 
 重新打开与「报障 Agent 补写证据」走 `notify_resolver`：往同一张 Thread 再投一条短消息，不新建 Thread。三个入口都在事务提交之后用 `tokio::spawn` 触发，HTTP 响应不等 Cybion。
 
@@ -168,7 +169,7 @@ Cybion 的 `/v1/threads` 按 API Key 的 owner 隔离，服务端拿一把公共
 
 | 旧 | 现在 |
 | --- | --- |
-| 终极机器每 120 秒执行检查命令 | 提交时一次 `POST /v1/threads` + `POST …/inputs` |
+| 终极机器每 120 秒执行检查命令 | 提交时一次 `POST /v1/threads` + `POST …/context` + `POST …/inputs` |
 | `GET /api/agent/queue` 返回待处理工单 | 没有队列接口 |
 | 项目级修复密钥 + 机器命令里内嵌令牌 | 单张工单的 Resolver 令牌，只出现在那张 Thread 的简报里 |
 | 项目设置里选 Worker、暂停、立即运行、断开 | 只需所有者连接 Cybion；设备由修复 Thread 自己用 `cybion_list_workers` 挑 |

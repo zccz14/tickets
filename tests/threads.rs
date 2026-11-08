@@ -124,7 +124,36 @@ async fn a_failed_thread_creation_is_recorded_and_can_be_retried() {
 }
 
 #[tokio::test]
-async fn a_failed_briefing_keeps_the_thread_and_says_so() {
+async fn a_failed_briefing_stops_before_the_opening_turn() {
+    let env = Env::new().await;
+    let user = env.app("alice").await;
+    connect(&user, ALICE_KEY).await;
+    let project = user.create_project("支付网关").await;
+
+    env.mock.fail_context_with(500);
+    let ticket = user
+        .create_ticket(&project, "退款回调丢失", "用户退款成功但订单没变", true)
+        .await;
+    let id = ticket["id"].as_str().unwrap().to_owned();
+    let broken = wait_for_thread_error(&user, &id).await;
+    assert!(broken["reporter_thread"]["thread_id"].is_string());
+    assert!(
+        broken["reporter_thread"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("调查简报写入失败")
+    );
+    // Without the briefing in context the Agent would work blind, so the
+    // opening turn is never sent.
+    assert!(env.mock.inputs().is_empty(), "上下文失败后不应开场");
+
+    // The Thread exists, so asking again is a conflict rather than a duplicate.
+    let (status, _) = user.post(&format!("/api/tickets/{id}/thread"), None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn a_failed_opening_keeps_the_thread_and_says_so() {
     let env = Env::new().await;
     let user = env.app("alice").await;
     connect(&user, ALICE_KEY).await;
@@ -141,7 +170,7 @@ async fn a_failed_briefing_keeps_the_thread_and_says_so() {
         broken["reporter_thread"]["error"]
             .as_str()
             .unwrap()
-            .contains("调查简报发送失败")
+            .contains("开场消息发送失败")
     );
 
     // The Thread exists, so asking again is a conflict rather than a duplicate.
@@ -553,7 +582,11 @@ async fn opening_a_draft_starts_its_thread_once() {
     assert_eq!(env.mock.thread_count(), 1);
     let briefing = env.mock.reporter_briefing(&ticket_id);
     assert!(briefing.contains("草稿"), "{briefing}");
-    assert!(briefing.contains("<!-- tickets-briefing -->"), "{briefing}");
+    assert!(briefing.contains("现场调查简报"), "{briefing}");
+    // The body stays in the Ticket card above the panel: the opening turn is
+    // one short line, not a copy of it.
+    assert_eq!(env.mock.inputs(), vec!["请帮我查一下这个问题。".to_owned()]);
+    assert!(!env.mock.inputs()[0].contains("现象是偶尔白屏"));
 
     // The next poll reads the existing Thread instead of minting another one.
     let (status, _) = bob

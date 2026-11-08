@@ -160,27 +160,16 @@ export function TicketPage() {
             </div>
           ) : null}
 
-          {data.status !== "draft" ? (
-            <article className="rounded-xl border border-border/70 bg-card p-5 text-sm">
-              {data.body.trim() ? (
-                <Markdown content={data.body} />
-              ) : (
-                <p className="text-sm text-muted-foreground">—</p>
-              )}
-            </article>
-          ) : null}
+          <article className="rounded-xl border border-border/70 bg-card p-5 text-sm">
+            {data.body.trim() ? (
+              <Markdown content={data.body} />
+            ) : (
+              <p className="text-sm text-muted-foreground">—</p>
+            )}
+          </article>
 
           {data.is_reporter && (threadInfo.thread_id || data.status !== "closed") ? (
-            <ThreadLivePanel
-              ticketId={data.id}
-              thread={threadInfo}
-              status={data.status}
-              intro={
-                data.status === "draft"
-                  ? { body: data.body, createdAt: data.created_at }
-                  : undefined
-              }
-            />
+            <ThreadLivePanel ticketId={data.id} thread={threadInfo} status={data.status} />
           ) : null}
 
           {data.status !== "draft" ? (

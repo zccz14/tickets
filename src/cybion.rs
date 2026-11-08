@@ -214,6 +214,26 @@ impl CybionClient {
         serde_json::from_value(value).map_err(|error| format!("Cybion 线程响应无法解析: {error}"))
     }
 
+    /// Background Tickets already holds, handed to the Thread as a developer
+    /// message: Cybion stores it folded, so the conversation shows the person's
+    /// own words while the model still reads the Ticket.
+    pub async fn append_context(
+        &self,
+        key: &str,
+        thread_id: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        let body = json!({ "content": content });
+        self.send(
+            reqwest::Method::POST,
+            &format!("/v1/threads/{thread_id}/context"),
+            key,
+            Some(body),
+        )
+        .await
+        .map(|_| ())
+    }
+
     pub async fn post_input(&self, key: &str, thread_id: &str, input: &str) -> Result<(), String> {
         let body = json!({ "input": input });
         self.send(

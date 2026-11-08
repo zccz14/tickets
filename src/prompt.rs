@@ -4,6 +4,12 @@
 //! while a Thread that knows which Ticket it owns, what to inspect, what not to
 //! touch, and exactly how to write its result back becomes an instrument. Keep
 //! it specific, keep it short enough to survive compaction.
+//!
+//! A briefing travels as Cybion *context*: an activity record the conversation
+//! folds and the compiler replays as a developer message. The Thread still
+//! needs a real user turn to start, so each side also has one short opening
+//! line — the human's own words, without repeating the Ticket body the page
+//! already shows.
 
 pub struct ReporterBriefing<'a> {
     pub cybion_base: String,
@@ -41,7 +47,8 @@ pub fn reporter_briefing(briefing: &ReporterBriefing<'_>) -> String {
     };
 
     format!(
-        r#"<!-- tickets-briefing -->
+        r#"工单 #{number} · 现场调查简报
+
 你是工单 #{number} 的「现场调查 Agent」，服务于报障人 {reporter}。
 
 ## 工单
@@ -111,6 +118,14 @@ jq -n --rawfile b /tmp/ticket-report.md '{{body:$b}}' \
     )
 }
 
+/// The reporter's own first turn. The Ticket body stays in the card above the
+/// panel, so this line must not repeat it — it only starts the investigation.
+pub const REPORTER_OPENING: &str = "请帮我查一下这个问题。";
+
+/// The owner's first turn in the repair Thread. The briefing itself is already
+/// in the conversation as developer context; this line starts the run.
+pub const RESOLVER_OPENING: &str = "请处理这张工单。";
+
 /// The push that starts the resolver side. There is no queue and no schedule:
 /// this text arrives in a fresh Thread the moment a Ticket is submitted, and it
 /// carries everything the resolver needs — the Ticket, the evidence, the Worker
@@ -143,7 +158,8 @@ pub fn resolver_briefing(briefing: &ResolverBriefing<'_>) -> String {
     let evidence = briefing.evidence.trim();
 
     format!(
-        r#"<!-- tickets-resolver-briefing -->
+        r#"工单 #{number} · 修复简报
+
 你是工单 #{number} 的「修复 Agent」，代表项目所有者 {owner} 处理这张工单。
 **这条消息就是派单**：不需要轮询、不需要读队列，工单已经在你手上。
 

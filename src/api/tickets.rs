@@ -818,11 +818,31 @@ pub async fn ensure_reporter_thread(state: &AppState, ticket_id: &str) -> AppRes
         ticket_id: &ticket.id,
         token: &token,
     });
-    if let Err(error) = state.cybion.post_input(&key, &thread.id, &briefing).await {
+    // The briefing is folded context, not something the reporter typed: the
+    // panel must show their own words, and the Ticket body already sits right
+    // above it. The short opening line is what actually starts the run.
+    if let Err(error) = state
+        .cybion
+        .append_context(&key, &thread.id, &briefing)
+        .await
+    {
         set_reporter_error(
             state,
             ticket_id,
-            Some(&format!("Thread 已创建，但调查简报发送失败：{error}")),
+            Some(&format!("Thread 已创建，但调查简报写入失败：{error}")),
+        )
+        .await?;
+        return Ok(());
+    }
+    if let Err(error) = state
+        .cybion
+        .post_input(&key, &thread.id, crate::prompt::REPORTER_OPENING)
+        .await
+    {
+        set_reporter_error(
+            state,
+            ticket_id,
+            Some(&format!("Thread 已创建，但开场消息发送失败：{error}")),
         )
         .await?;
     }
@@ -953,7 +973,26 @@ pub async fn dispatch_resolver(state: &AppState, ticket_id: &str) -> AppResult<(
         ticket_url: &ticket_url,
         token: &token,
     });
-    match state.cybion.post_input(&key, &thread_id, &briefing).await {
+    // Same split as the reporter side: the dispatch itself is folded context,
+    // and one short owner line starts the run.
+    if let Err(error) = state
+        .cybion
+        .append_context(&key, &thread_id, &briefing)
+        .await
+    {
+        set_resolver_error(
+            state,
+            ticket_id,
+            Some(&format!("修复 Thread 已就绪，但派单简报写入失败：{error}")),
+        )
+        .await?;
+        return Err(AppError::unavailable(error));
+    }
+    match state
+        .cybion
+        .post_input(&key, &thread_id, crate::prompt::RESOLVER_OPENING)
+        .await
+    {
         Ok(()) => {
             set_resolver_error(state, ticket_id, None).await?;
             Ok(())
@@ -962,7 +1001,7 @@ pub async fn dispatch_resolver(state: &AppState, ticket_id: &str) -> AppResult<(
             set_resolver_error(
                 state,
                 ticket_id,
-                Some(&format!("修复 Thread 已就绪，但派单简报发送失败：{error}")),
+                Some(&format!("修复 Thread 已就绪，但开场消息发送失败：{error}")),
             )
             .await?;
             Err(AppError::unavailable(error))
