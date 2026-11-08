@@ -65,6 +65,17 @@ async fn submitting_pushes_the_ticket_to_the_owners_resolver_thread() {
         briefing.contains("cybion_list_workers"),
         "设备由 Agent 自己挑"
     );
+
+    // The dispatch itself is folded context; one short owner line starts it.
+    let mut opening = String::new();
+    for _ in 0..300 {
+        opening = env.mock.last_input();
+        if opening == "请处理这张工单。" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(opening, "请处理这张工单。");
 }
 
 #[tokio::test]

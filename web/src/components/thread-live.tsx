@@ -54,14 +54,10 @@ export function ThreadLivePanel({
   ticketId,
   thread,
   status,
-  intro,
 }: {
   ticketId: string
   thread: ThreadInfo
   status: "draft" | "open" | "closed"
-  /// The message that started a draft: it is the first turn of the same
-  /// conversation, so it belongs inside the panel, not above it.
-  intro?: { body: string; createdAt: number }
 }) {
   const { request, lang, getToken, cybionBaseUrl } = useSession()
   const { t } = useCopy()
@@ -116,18 +112,12 @@ export function ThreadLivePanel({
         >
           <CybionThreadView
             threadId={threadId}
-            intro={intro}
             readOnly={status === "closed"}
             className="min-h-0 flex-1"
           />
         </CybionThreadProvider>
       ) : (
         <div className="min-h-[10rem] flex-1 space-y-3 px-4 py-4">
-          {intro?.body.trim() ? (
-            <div className="ml-auto max-w-[85%] rounded-xl rounded-br-sm bg-primary/8 px-3 py-2 text-sm whitespace-pre-wrap">
-              {intro.body}
-            </div>
-          ) : null}
           {threadError ? (
             <div className="flex flex-wrap items-center gap-2 text-xs text-destructive">
               <CircleAlertIcon className="size-3.5" />
