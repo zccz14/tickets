@@ -10,7 +10,7 @@ use crate::{
     AppState,
     api::{account, projects},
     auth::CurrentUser,
-    crypto::{hash_token, new_id, new_token, now, token_hint},
+    crypto::{new_id, now},
     error::{AppError, AppResult},
     model::{
         AgentEndpoint, CreateTicket, ThreadInput, ThreadView, TicketSummary, TicketView,
@@ -793,14 +793,11 @@ pub async fn ensure_reporter_thread(state: &AppState, ticket_id: &str) -> AppRes
         }
     };
 
-    let token = new_token();
     sqlx::query(
-        "UPDATE tickets SET reporter_thread_id=?, reporter_thread_owner=?, reporter_agent_token_hash=?, reporter_agent_token_hint=?, reporter_thread_error=NULL WHERE id=?",
+        "UPDATE tickets SET reporter_thread_id=?, reporter_thread_owner=?, reporter_thread_error=NULL WHERE id=?",
     )
     .bind(&thread.id)
     .bind(&ticket.reporter_user_id)
-    .bind(hash_token(&token))
-    .bind(token_hint(&token))
     .bind(ticket_id)
     .execute(&state.db)
     .await?;
@@ -815,7 +812,6 @@ pub async fn ensure_reporter_thread(state: &AppState, ticket_id: &str) -> AppRes
         draft: ticket.status == "draft",
         api_base: &state.public_base_url,
         ticket_id: &ticket.id,
-        token: &token,
     });
     // The briefing is folded context, not something the reporter typed: the
     // panel must show their own words, and the Ticket body already sits right
@@ -917,20 +913,15 @@ pub async fn dispatch_resolver(state: &AppState, ticket_id: &str) -> AppResult<(
     let ticket_url = format!("{}/#/tickets/{}", state.public_base_url, ticket.id);
 
     // One Thread per Ticket: a previous attempt may have created it and failed
-    // to brief it, in which case the same Thread is reused and its token is
-    // rotated. A Thread that is already briefed is left alone.
-    let token = new_token();
+    // to brief it, in which case the same Thread is reused. A Thread that is
+    // already briefed is left alone.
     let thread_id = match ticket.resolver_thread_id.clone() {
         Some(thread_id) if ticket.resolver_thread_error.is_some() => {
-            sqlx::query(
-                "UPDATE tickets SET resolver_agent_token_hash=?, resolver_agent_token_hint=?, resolver_dispatched_at=? WHERE id=?",
-            )
-            .bind(hash_token(&token))
-            .bind(token_hint(&token))
-            .bind(now())
-            .bind(ticket_id)
-            .execute(&state.db)
-            .await?;
+            sqlx::query("UPDATE tickets SET resolver_dispatched_at=? WHERE id=?")
+                .bind(now())
+                .bind(ticket_id)
+                .execute(&state.db)
+                .await?;
             thread_id
         }
         Some(_) => return Ok(()),
@@ -948,12 +939,10 @@ pub async fn dispatch_resolver(state: &AppState, ticket_id: &str) -> AppResult<(
                 }
             };
             sqlx::query(
-                "UPDATE tickets SET resolver_thread_id=?, resolver_thread_owner=?, resolver_agent_token_hash=?, resolver_agent_token_hint=?, resolver_dispatched_at=? WHERE id=?",
+                "UPDATE tickets SET resolver_thread_id=?, resolver_thread_owner=?, resolver_dispatched_at=? WHERE id=?",
             )
             .bind(&created.id)
             .bind(&project.owner_user_id)
-            .bind(hash_token(&token))
-            .bind(token_hint(&token))
             .bind(now())
             .bind(ticket_id)
             .execute(&state.db)
@@ -973,7 +962,6 @@ pub async fn dispatch_resolver(state: &AppState, ticket_id: &str) -> AppResult<(
         api_base: &state.public_base_url,
         ticket_id: &ticket.id,
         ticket_url: &ticket_url,
-        token: &token,
     });
     // Same split as the reporter side: the dispatch itself is folded context,
     // and one short owner line starts the run.

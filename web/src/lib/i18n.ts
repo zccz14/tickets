@@ -117,16 +117,16 @@ export const copy = {
       "这个工单系统默认的使用者是 AI Agent：一半在报障侧查现场，一半在修复侧解决问题。两边都通过 HTTP API 说话。",
     guideReporterTitle: "报障 Agent",
     guideReporterBody:
-      "报障人连接 Cybion 后，工单会自动获得一个 Cybion Thread。系统把「工单 + 调查指令 + 一次性令牌」交给它，它在报障人的机器上只读排查，再把现场证据写回工单。报障人也可以在工单页的现场调查面板里直接和它对话。",
-    guideReporterScope: "令牌只绑这张工单：能读工单、能写回证据，不能关闭。",
+      "报障人连接 Cybion 后，工单会自动获得一个 Cybion Thread。系统把「工单 + 调查指令」交给它，它在报障人的机器上只读排查，再把现场证据写回工单。写回前它用 Cybion 的 `create_thread_token` 现场签一张 60 秒的证件——Tickets 自己不存任何令牌。报障人也可以在工单页的现场调查面板里直接和它对话。",
+    guideReporterScope: "它只能证明自己是这条 Thread：能读工单、能写回证据，不能关闭。",
     guideResolverTitle: "修复 Agent",
     guideResolverBody:
       "报障人提交工单的那一刻，Tickets 用项目所有者的 Cybion 账号开一个修复 Thread，把工单、现场证据和结论接口一起推给它。它修完写下结论，工单在同一个调用里关闭。",
-    guideResolverScope: "令牌只绑这张工单：能读工单、能写结论并关闭。",
+    guideResolverScope: "它只能证明自己是这条 Thread：能读工单、能写结论并关闭。",
     guideFlowTitle: "一张工单的旅程",
     guideFlowNote:
       "没有队列、没有轮询、也没有定时任务：提交就是一次 HTTP 调用，修复 Agent 由 Cybion 直接唤醒；重新打开工单会把同一条 Thread 再推一次。",
-    guideTokenNote: "两边各拿一枚一次性令牌，都只绑定自己那张工单：报障侧只能写证据，修复侧只能写结论。",
+    guideTokenNote: "两侧都不持有长期令牌：Agent 每次写回前签一张 60 秒的证件，Tickets 拿它核对「这就是我为这张工单开的那条 Thread」。",
     settingsCybionTitle: "Cybion 账号",
     settingsCybionDescription:
       "连接你自己的 Cybion 后，报障时系统会用你的账号开一个专属 Thread，在你自己机器上做现场调查；作为项目所有者，提交到你项目的工单也用它来开修复 Thread。",
@@ -267,17 +267,17 @@ export const copy = {
       "This tracker's users are Agents: one half investigates on the reporter's side, the other half fixes on the resolver's side. Both talk HTTP.",
     guideReporterTitle: "Reporter Agent",
     guideReporterBody:
-      "Once a reporter connects Cybion, a ticket gets a Cybion thread automatically. Tickets hands it the ticket, the investigation brief and a one-off token; it inspects the reporter's machine read-only and writes the evidence back. The reporter can also talk to it from the live investigation panel.",
-    guideReporterScope: "The token is bound to this ticket: read it, write evidence, nothing else.",
+      "Once a reporter connects Cybion, a ticket gets a Cybion thread automatically. Tickets hands it the ticket and the investigation brief; it inspects the reporter's machine read-only and writes the evidence back. Before writing, it mints a sixty-second proof of which thread it is with Cybion's `create_thread_token` — Tickets itself stores no token at all. The reporter can also talk to it from the live investigation panel.",
+    guideReporterScope: "It can only prove it is this thread: read the ticket, write evidence, nothing else.",
     guideResolverTitle: "Resolver Agent",
     guideResolverBody:
       "The moment a reporter submits, Tickets opens a resolver thread on the project owner's Cybion account and pushes the ticket, the evidence and the resolve endpoint into it. The Agent fixes it, writes its conclusion, and the ticket closes in that same call.",
-    guideResolverScope: "The token is bound to this ticket: read it, write the conclusion and close.",
+    guideResolverScope: "It can only prove it is this thread: read the ticket, write the conclusion and close.",
     guideFlowTitle: "The life of a ticket",
     guideFlowNote:
       "No queue, no polling, no scheduled job: submitting is one HTTP call, and Cybion wakes the resolver Agent directly. Reopening pushes the same thread again.",
     guideTokenNote:
-      "Each side holds one one-off token bound to its own ticket: the reporter side writes evidence, the resolver side writes the conclusion.",
+      "Neither side holds a long-lived token: before every write the Agent mints a sixty-second proof, and Tickets checks that it names the thread it opened for this ticket.",
     settingsCybionTitle: "Cybion account",
     settingsCybionDescription:
       "Connect your own Cybion: reporting gets a dedicated thread that inspects your machine, and as a project owner the same account opens the resolver thread for tickets submitted to your projects.",

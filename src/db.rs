@@ -79,13 +79,9 @@ CREATE TABLE IF NOT EXISTS tickets (
   resolution_at               INTEGER,
   reporter_thread_id          TEXT,
   reporter_thread_owner       TEXT,
-  reporter_agent_token_hash   TEXT,
-  reporter_agent_token_hint   TEXT,
   reporter_thread_error       TEXT,
   resolver_thread_id          TEXT,
   resolver_thread_owner       TEXT,
-  resolver_agent_token_hash   TEXT,
-  resolver_agent_token_hint   TEXT,
   resolver_thread_error       TEXT,
   resolver_dispatched_at      INTEGER,
   UNIQUE(project_id, number)
@@ -94,6 +90,10 @@ CREATE TABLE IF NOT EXISTS tickets (
 CREATE INDEX IF NOT EXISTS idx_project_grants_user ON project_grants(user_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_project   ON tickets(project_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tickets_reporter  ON tickets(reporter_user_id, updated_at DESC);
+-- The two Agent calls arrive with a Thread id and nothing else, so this is the
+-- lookup path that must stay cheap.
+CREATE INDEX IF NOT EXISTS idx_tickets_reporter_thread ON tickets(reporter_thread_id);
+CREATE INDEX IF NOT EXISTS idx_tickets_resolver_thread ON tickets(resolver_thread_id);
 "#;
 
 pub async fn connect(database_path: &Path) -> anyhow::Result<sqlx::SqlitePool> {
@@ -127,8 +127,6 @@ async fn migrate(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
         ("tickets", "resolution_at", "INTEGER"),
         ("tickets", "resolver_thread_id", "TEXT"),
         ("tickets", "resolver_thread_owner", "TEXT"),
-        ("tickets", "resolver_agent_token_hash", "TEXT"),
-        ("tickets", "resolver_agent_token_hint", "TEXT"),
         ("tickets", "resolver_thread_error", "TEXT"),
         ("tickets", "resolver_dispatched_at", "INTEGER"),
     ] {
@@ -153,6 +151,10 @@ async fn migrate(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
         .execute(pool)
         .await?;
     for (table, column) in [
+        ("tickets", "reporter_agent_token_hash"),
+        ("tickets", "reporter_agent_token_hint"),
+        ("tickets", "resolver_agent_token_hash"),
+        ("tickets", "resolver_agent_token_hint"),
         ("tickets", "last_reporter_at"),
         ("tickets", "last_resolver_at"),
         ("projects", "resolver_key_hash"),

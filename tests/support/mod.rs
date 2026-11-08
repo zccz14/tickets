@@ -17,11 +17,13 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use ed25519_dalek::{Signer, SigningKey};
 use http_body_util::BodyExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tempfile::TempDir;
-use tickets::{AppState, Options, bootstrap, db, router};
+use tickets::{AppState, Options, bootstrap, db, router, thread_token::ThreadTokens};
 use tower::ServiceExt;
 
 #[derive(Clone, Debug)]
@@ -374,7 +376,7 @@ impl Env {
     }
 
     async fn build(&self, dev_user: Option<&str>) -> App {
-        let state = bootstrap(Options {
+        let mut state = bootstrap(Options {
             listen: "127.0.0.1:0".parse().unwrap(),
             data_dir: self.dir.path().to_path_buf(),
             public_base_url: Some(PUBLIC_BASE.to_owned()),
@@ -382,6 +384,12 @@ impl Env {
         })
         .await
         .expect("启动应用状态");
+        // Pin the key this module signs test tokens with, so the app verifies
+        // them exactly as it would verify Cybion's.
+        state.threads = ThreadTokens::pinned(HashMap::from([(
+            TEST_KID.to_owned(),
+            signing_key().verifying_key(),
+        )]));
         let router = router(state.clone());
         App { state, router }
     }
@@ -390,6 +398,37 @@ impl Env {
 pub struct App {
     pub state: AppState,
     pub router: Router,
+}
+
+impl Env {
+    /// The Thread id Tickets bound to the reporter side of a Ticket.
+    pub async fn reporter_thread(&self, ticket_id: &str) -> String {
+        self.thread_column("reporter_thread_id", ticket_id)
+            .await
+            .expect("报障 Thread 应当建好")
+    }
+
+    /// The Thread id Tickets bound to the resolver side of a Ticket.
+    pub async fn resolver_thread(&self, ticket_id: &str) -> String {
+        self.thread_column("resolver_thread_id", ticket_id)
+            .await
+            .expect("修复 Thread 应当建好")
+    }
+
+    async fn thread_column(&self, column: &str, ticket_id: &str) -> Option<String> {
+        let pool = db::connect(&self.dir.path().join("tickets.db"))
+            .await
+            .ok()?;
+        let value: Option<String> =
+            sqlx::query_scalar(&format!("SELECT {column} FROM tickets WHERE id=?"))
+                .bind(ticket_id)
+                .fetch_one(&pool)
+                .await
+                .ok()
+                .flatten();
+        pool.close().await;
+        value
+    }
 }
 
 impl App {
@@ -573,14 +612,41 @@ pub async fn send(
     send_with_token(router, None, method, uri, body).await
 }
 
-/// `tk_` plus 48 hex characters, extracted from the briefing the Thread got.
-pub fn extract_agent_token(briefing: &str) -> String {
-    let start = briefing.find("tk_").expect("简报里应当带一次性令牌");
-    let tail = &briefing[start + 3..];
-    let end = tail
-        .find(|c: char| !c.is_ascii_hexdigit())
-        .unwrap_or(tail.len());
-    format!("tk_{}", &tail[..end])
+const TEST_KID: &str = "test-key";
+
+fn signing_key() -> SigningKey {
+    SigningKey::from_bytes(&[42u8; 32])
+}
+
+/// A token for one Thread, minted the way `create_thread_token` mints it: the
+/// same claims, the same signing algorithm, a minute of life.
+pub fn thread_token(thread_id: &str) -> String {
+    mint(thread_id, tickets::crypto::now() + 60)
+}
+
+/// The same token, one minute after it stopped being valid.
+pub fn expired_thread_token(thread_id: &str) -> String {
+    mint(thread_id, tickets::crypto::now() - 1)
+}
+
+fn mint(thread_id: &str, expires_at: i64) -> String {
+    let header =
+        URL_SAFE_NO_PAD.encode(json!({"alg":"EdDSA","kid":TEST_KID,"typ":"JWT"}).to_string());
+    let now = tickets::crypto::now();
+    let payload = URL_SAFE_NO_PAD.encode(
+        json!({
+            "iss": tickets::thread_token::ISSUER,
+            "sub": thread_id,
+            "iat": now,
+            "exp": expires_at,
+        })
+        .to_string(),
+    );
+    let signature = signing_key().sign(format!("{header}.{payload}").as_bytes());
+    format!(
+        "{header}.{payload}.{}",
+        URL_SAFE_NO_PAD.encode(signature.to_bytes())
+    )
 }
 
 pub fn error_message(value: &Value) -> &str {

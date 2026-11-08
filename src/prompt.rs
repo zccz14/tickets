@@ -21,7 +21,6 @@ pub struct ReporterBriefing<'a> {
     pub draft: bool,
     pub api_base: &'a str,
     pub ticket_id: &'a str,
-    pub token: &'a str,
 }
 
 pub fn reporter_briefing(briefing: &ReporterBriefing<'_>) -> String {
@@ -73,9 +72,15 @@ pub fn reporter_briefing(briefing: &ReporterBriefing<'_>) -> String {
 - 工作目录用 /tmp，不要污染报障人的项目目录。
 
 ## 把报告写回工单（必做）
-调查有结论后，用下面的方式把报告写回工单。这是你这次任务唯一的交付物：
+调查有结论后，用下面的方式把报告写回工单。这是你这次任务唯一的交付物。
+
+**先签一张证件**：调用 `create_thread_token` 工具，它返回一张 60 秒内有效、证明"你就是这条 Thread"的令牌，
+把它填进下面的 `$TOKEN`。一分钟就作废，所以顺序是：先把报告写好，再签，再发。
+签发后 401 说明过期了，再签一张重发一次即可。
 
 ```bash
+TOKEN='<create_thread_token 返回的 token>'
+
 cat > /tmp/ticket-report.md <<'REPORT'
 ### 现场环境
 ### 关键证据
@@ -85,7 +90,7 @@ REPORT
 
 jq -n --rawfile b /tmp/ticket-report.md '{{body:$b}}' \
   | curl -fsS -X POST '{api_base}/api/agent/tickets/{ticket_id}/evidence' \
-      -H 'Authorization: Bearer {token}' \
+      -H "Authorization: Bearer $TOKEN" \
       -H 'Content-Type: application/json' \
       --data-binary @-
 ```
@@ -103,7 +108,6 @@ jq -n --rawfile b /tmp/ticket-report.md '{{body:$b}}' \
         stage = stage,
         api_base = briefing.api_base,
         ticket_id = briefing.ticket_id,
-        token = briefing.token,
         cybion_base = briefing.cybion_base,
     )
 }
@@ -131,7 +135,6 @@ pub struct ResolverBriefing<'a> {
     pub api_base: &'a str,
     pub ticket_id: &'a str,
     pub ticket_url: &'a str,
-    pub token: &'a str,
 }
 
 pub fn resolver_briefing(briefing: &ResolverBriefing<'_>) -> String {
@@ -172,9 +175,13 @@ pub fn resolver_briefing(briefing: &ResolverBriefing<'_>) -> String {
 ## 你要做的事
 1. **先读证据，再自己核实**：需要时在这台 Worker 上跑只读命令，确认版本、日志、配置与复现路径。
 2. **定位根因并修复**。修复要克制：先备份、只改必要的地方、改完立刻验证；不要顺手升级或重构。
-3. **写结论并关闭工单**——这是唯一必须完成的动作，也是这次任务唯一的交付物：
+3. **写结论并关闭工单**——这是唯一必须完成的动作，也是这次任务唯一的交付物。
+   先调用 `create_thread_token` 工具签一张 60 秒有效的令牌，填进下面的 `$TOKEN`；
+   顺序同样是：先把结论写好，再签，再发。401 就再签一张。
 
 ```bash
+TOKEN='<create_thread_token 返回的 token>'
+
 cat > /tmp/resolution.md <<'RESOLUTION'
 ### 根因
 ### 改了什么
@@ -184,7 +191,7 @@ RESOLUTION
 
 jq -n --rawfile r /tmp/resolution.md '{{resolution:$r}}' \
   | curl -fsS -X POST '{api_base}/api/agent/tickets/{ticket_id}/resolve' \
-      -H 'Authorization: Bearer {token}' \
+      -H "Authorization: Bearer $TOKEN" \
       -H 'Content-Type: application/json' \
       --data-binary @-
 ```
@@ -197,9 +204,9 @@ jq -n --rawfile r /tmp/resolution.md '{{resolution:$r}}' \
   确实需要报障人配合（比如重放一次业务操作），把它写进结论，由人决定是否重新打开工单。
 - 不要输出任何密钥、令牌、密码、私钥、身份证/手机号等个人信息；命中就写「已省略」。
 - 每条结论都要有命令与输出支撑，不要为了"看起来修好了"跳过验证。
-- 你的令牌只对工单 #{number} 有效，不要尝试碰别的工单或改项目设置。
-- 需要重新读工单时：`curl -fsS {api_base}/api/agent/tickets/{ticket_id} -H 'Authorization: Bearer {token}'`。
-- 令牌只出现在这条消息里，不要把它写进结论。"#,
+- 令牌只证明"你就是这条 Thread"，它只对工单 #{number} 有效；不要尝试碰别的工单或改项目设置。
+- 需要重新读工单时同样先签一张：`curl -fsS {api_base}/api/agent/tickets/{ticket_id} -H "Authorization: Bearer $TOKEN"`。
+- 令牌 60 秒就过期，没必要也不该写进结论或存成文件；下次要用再签一张。"#,
         number = briefing.ticket_number,
         project_block = project_block,
         title = briefing.title,
@@ -213,7 +220,6 @@ jq -n --rawfile r /tmp/resolution.md '{{resolution:$r}}' \
         api_base = briefing.api_base,
         ticket_id = briefing.ticket_id,
         ticket_url = briefing.ticket_url,
-        token = briefing.token,
     )
 }
 

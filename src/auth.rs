@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     AppState,
-    crypto::{hash_token, now},
+    crypto::now,
     error::{AppError, AppResult},
 };
 
@@ -190,10 +190,10 @@ pub async fn upsert_user(
     })
 }
 
-/// Agent authentication. One bearer-token space, two kinds of token, both bound
-/// to a single Ticket: the reporter token and the resolver token Tickets mints
-/// when it pushes the Ticket. The token itself is never stored — only its
-/// SHA-256 — so a database leak cannot mint agent calls.
+/// Agent authentication. The Agent presents a token Cybion signed for the Thread
+/// it is running in, and the Thread id inside it is looked up against the two
+/// Threads a Ticket can have. Tickets stores no agent secret at all: nothing to
+/// leak, nothing to rotate, and the credential dies a minute after it is minted.
 pub async fn require_agent(
     State(state): State<AppState>,
     mut request: Request,
@@ -203,11 +203,11 @@ pub async fn require_agent(
         Ok(token) => token,
         Err(error) => return error.into_response(),
     };
-    if !token.starts_with("tk_") {
-        return AppError::unauthorized("无效的 Agent 令牌").into_response();
-    }
-    let hash = hash_token(&token);
-    match resolve_agent(&state, &hash).await {
+    let thread_id = match state.threads.verify(&token).await {
+        Ok(thread_id) => thread_id,
+        Err(error) => return error.into_response(),
+    };
+    match resolve_agent(&state, &thread_id).await {
         Ok(identity) => {
             request.extensions_mut().insert(identity);
             next.run(request).await
@@ -216,13 +216,12 @@ pub async fn require_agent(
     }
 }
 
-async fn resolve_agent(state: &AppState, hash: &str) -> AppResult<AgentIdentity> {
-    let ticket = sqlx::query(
-        "SELECT id,reporter_user_id,number FROM tickets WHERE reporter_agent_token_hash=?",
-    )
-    .bind(hash)
-    .fetch_optional(&state.db)
-    .await?;
+async fn resolve_agent(state: &AppState, thread_id: &str) -> AppResult<AgentIdentity> {
+    let ticket =
+        sqlx::query("SELECT id,reporter_user_id,number FROM tickets WHERE reporter_thread_id=?")
+            .bind(thread_id)
+            .fetch_optional(&state.db)
+            .await?;
     if let Some(row) = ticket {
         let number: i64 = row.get(2);
         return Ok(AgentIdentity {
@@ -234,9 +233,9 @@ async fn resolve_agent(state: &AppState, hash: &str) -> AppResult<AgentIdentity>
         });
     }
     let resolver = sqlx::query(
-        "SELECT t.id,t.number,p.name FROM tickets t JOIN projects p ON p.id=t.project_id WHERE t.resolver_agent_token_hash=?",
+        "SELECT t.id,t.number,p.name FROM tickets t JOIN projects p ON p.id=t.project_id WHERE t.resolver_thread_id=?",
     )
-    .bind(hash)
+    .bind(thread_id)
     .fetch_optional(&state.db)
     .await?;
     if let Some(row) = resolver {
@@ -250,7 +249,7 @@ async fn resolve_agent(state: &AppState, hash: &str) -> AppResult<AgentIdentity>
         });
     }
     Err(AppError::unauthorized(
-        "Agent 令牌无效或已被轮换。请在工单页重新获取。",
+        "这个 Thread 没有绑定任何工单。请确认你是在工单页打开的那条 Thread 里运行。",
     ))
 }
 

@@ -4,7 +4,6 @@ use aes_gcm::{
 };
 use anyhow::Context;
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
-use rand::Rng;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -80,19 +79,6 @@ fn restrict_permissions(_path: &Path) -> anyhow::Result<()> {
 
 /// `tk_` + 48 hex characters. Long enough to be unguessable, short enough to
 /// paste into a Cybion Thread prompt without wrapping.
-pub fn new_token() -> String {
-    let mut bytes = [0u8; 24];
-    rand::rng().fill(&mut bytes);
-    format!("tk_{}", hex::encode(bytes))
-}
-
-pub fn hash_token(token: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    hex::encode(hasher.finalize())
-}
-
 /// `cyb_abc123…` — the first characters only, for "which key is this" display.
 pub fn token_hint(token: &str) -> String {
     let head: String = token.chars().take(12).collect();
@@ -150,19 +136,6 @@ mod tests {
         let sealed = SecretBox::load_or_create(one.path()).unwrap().seal("hello");
         let other = SecretBox::load_or_create(two.path()).unwrap();
         assert!(other.open(&sealed).is_err());
-    }
-
-    #[test]
-    fn agent_tokens_are_prefixed_and_only_ever_stored_hashed() {
-        let token = new_token();
-        assert!(token.starts_with("tk_"));
-        assert_eq!(token.len(), 51);
-        assert_eq!(hash_token(&token).len(), 64);
-        assert_ne!(hash_token(&token), token);
-        assert_eq!(
-            hash_token("abc"),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
     }
 
     #[test]

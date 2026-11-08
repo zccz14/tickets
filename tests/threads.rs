@@ -5,7 +5,6 @@ use std::time::Duration;
 use axum::http::StatusCode;
 use serde_json::json;
 use support::*;
-use tickets::crypto::hash_token;
 
 const ALICE_KEY: &str = "cyb_alice_0123456789";
 const BOB_KEY: &str = "cyb_bob_9876543210";
@@ -179,7 +178,7 @@ async fn a_failed_first_message_keeps_the_thread_and_says_so() {
 }
 
 #[tokio::test]
-async fn each_ticket_gets_its_reporters_own_key_and_a_hashed_token() {
+async fn each_ticket_gets_its_reporters_own_key_and_its_own_thread() {
     let env = Env::new().await;
     let alice = env.app("alice").await;
     let bob = env.app("bob").await;
@@ -220,26 +219,30 @@ async fn each_ticket_gets_its_reporters_own_key_and_a_hashed_token() {
     let bob_thread = create_for(&bob_id);
     assert_eq!(bob_thread.bearer.as_deref(), Some(BOB_KEY));
 
-    // The briefing hands the Thread the ticket, the API base and its token.
+    // The briefing hands the Thread the ticket, the API base, and how to prove
+    // it is this Thread — never a credential of its own.
     let briefing = env.mock.reporter_briefing(&alice_id);
     assert!(briefing.contains(&alice_id));
     assert!(briefing.contains("支付网关"));
     assert!(briefing.contains(PUBLIC_BASE));
     assert!(briefing.contains("只读"));
-    let token = extract_agent_token(&briefing);
-    assert_eq!(token.len(), 3 + 48);
+    assert!(briefing.contains("create_thread_token"));
+    assert!(
+        !briefing.contains("tk_"),
+        "Tickets 不再自己签令牌: {briefing}"
+    );
 
-    // The database keeps only the hash and a short hint.
-    let (hash, hint): (String, String) = sqlx::query_as(
-        "SELECT reporter_agent_token_hash,reporter_agent_token_hint FROM tickets WHERE id=?",
-    )
-    .bind(&alice_id)
-    .fetch_one(&alice.state.db)
-    .await
-    .unwrap();
-    assert_eq!(hash, hash_token(&token));
-    assert_ne!(hash, token);
-    assert_eq!(hint, format!("{}…", &token[..12]));
+    // The database keeps the Thread id and nothing secret.
+    let thread_id: String = sqlx::query_scalar("SELECT reporter_thread_id FROM tickets WHERE id=?")
+        .bind(&alice_id)
+        .fetch_one(&alice.state.db)
+        .await
+        .unwrap();
+    let view = alice.ticket(&alice_id).await;
+    assert_eq!(
+        Some(thread_id.as_str()),
+        view["reporter_thread"]["thread_id"].as_str()
+    );
 
     // The Thread is owned by the reporter and points back at the ticket.
     let stored: String = sqlx::query_scalar("SELECT reporter_thread_owner FROM tickets WHERE id=?")
@@ -333,7 +336,7 @@ async fn the_reporter_token_writes_evidence_with_the_reporters_own_key() {
         .await;
     let id = ticket["id"].as_str().expect("工单 id").to_owned();
     wait_for_thread(&alice, &id).await;
-    let token = extract_agent_token(&env.mock.reporter_briefing(&id));
+    let token = thread_token(&env.reporter_thread(&id).await);
 
     let (status, body) = alice
         .evidence(&token, &id, "### 关键证据\n回调日志 30s 超时")

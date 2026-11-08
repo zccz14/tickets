@@ -6,6 +6,7 @@ pub mod db;
 pub mod error;
 pub mod model;
 pub mod prompt;
+pub mod thread_token;
 pub mod web;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
@@ -13,7 +14,10 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use axum::{Router, middleware::from_fn_with_state, routing::get};
 use sqlx::SqlitePool;
 
-use crate::{auth::AuthGate, crypto::SecretBox, cybion::CybionClient, error::AppResult};
+use crate::{
+    auth::AuthGate, crypto::SecretBox, cybion::CybionClient, error::AppResult,
+    thread_token::ThreadTokens,
+};
 
 pub const DEFAULT_AUTH_BASE_URL: &str = "https://auth.ntnl.io";
 pub const DEFAULT_LINKIT_BASE_URL: &str = "https://linkit.ntnl.io";
@@ -29,6 +33,8 @@ pub struct AppState {
     pub secrets: Arc<SecretBox>,
     pub auth: AuthGate,
     pub cybion: CybionClient,
+    /// Verifies the Cybion-issued token a Ticket's Agent calls in with.
+    pub threads: ThreadTokens,
     pub auth_base_url: String,
     pub linkit_base_url: String,
     pub public_base_url: String,
@@ -83,6 +89,7 @@ pub async fn bootstrap(options: Options) -> anyhow::Result<AppState> {
         db,
         secrets,
         auth: AuthGate::new(auth_base.clone(), AUTH_AUDIENCE),
+        threads: ThreadTokens::new(&cybion_base),
         cybion: CybionClient::new(cybion_base),
         auth_base_url: auth_base,
         linkit_base_url: linkit_base,
