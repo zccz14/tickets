@@ -107,8 +107,13 @@ export function TicketPage() {
   const canClose = data.is_reporter || data.is_project_owner
   const pending =
     submit.isPending || close.isPending || reopen.isPending || createThread.isPending || dispatch.isPending
+  // Two ways a Ticket can be waiting for the resolver: the push failed, or it
+  // was submitted before Tickets pushed at all — a pre-push Ticket has neither a
+  // Thread nor an error, and still deserves the button.
   const dispatchRetryable =
-    data.is_project_owner && data.status === "open" && Boolean(data.resolver_thread.error)
+    data.is_project_owner &&
+    data.status === "open" &&
+    (!data.resolver_thread.thread_id || Boolean(data.resolver_thread.error))
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5">
