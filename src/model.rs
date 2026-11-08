@@ -28,10 +28,10 @@ pub struct ProjectView {
     pub updated_at: i64,
     pub open_tickets: i64,
     pub total_tickets: i64,
+    /// True when the owner has connected Cybion: submitted Tickets get a
+    /// resolver Thread. There is nothing else to configure — not a Worker, not
+    /// a schedule.
     pub resolver_ready: bool,
-    pub resolver_thread_url: Option<String>,
-    /// The Cybion Ultimate Machine that watches this project's queue.
-    pub resolver_machine_id: Option<String>,
     pub is_owner: bool,
     /// `public` or `private`. Private projects are visible only to the owner
     /// and the users listed in `project_grants`.
@@ -53,20 +53,9 @@ pub struct TicketSummary {
     pub reporter_name: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
-    pub comment_count: i64,
     pub has_evidence: bool,
+    pub has_resolution: bool,
     pub thread_id: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct CommentView {
-    pub id: String,
-    pub kind: String,
-    pub author_kind: String,
-    pub author_user_id: Option<String>,
-    pub author_name: Option<String>,
-    pub body: String,
-    pub created_at: i64,
 }
 
 #[derive(Serialize)]
@@ -86,9 +75,9 @@ pub struct ThreadView {
 
 #[derive(Serialize)]
 pub struct AgentEndpoint {
-    pub comments_url: String,
     pub ticket_url: String,
-    pub close_url: String,
+    pub evidence_url: String,
+    pub resolve_url: String,
 }
 
 #[derive(Serialize)]
@@ -108,11 +97,18 @@ pub struct TicketView {
     pub closed_at: Option<i64>,
     pub closed_by_kind: Option<String>,
     pub closed_by_name: Option<String>,
+    /// The reporter Agent's findings, written back once it has looked.
+    pub evidence: Option<String>,
+    pub evidence_at: Option<i64>,
+    /// The resolver Agent's conclusion, written in the same call that closes.
+    pub resolution: Option<String>,
+    pub resolution_at: Option<i64>,
     pub is_reporter: bool,
     pub is_project_owner: bool,
-    pub comments: Vec<CommentView>,
     pub reporter_thread: ThreadView,
-    pub resolver_thread_url: Option<String>,
+    /// The Thread Tickets pushed this Ticket into when it was submitted. It
+    /// belongs to the project owner's Cybion account, so only they get a link.
+    pub resolver_thread: ThreadView,
     pub agent: AgentEndpoint,
 }
 
@@ -137,8 +133,6 @@ pub struct UpdateProject {
     pub description: Option<String>,
     #[serde(default)]
     pub visibility: Option<String>,
-    #[serde(default)]
-    pub resolver_thread_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -177,9 +171,10 @@ pub struct UpdateTicket {
     pub body: Option<String>,
 }
 
+/// A message the reporter types into the investigation conversation.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CreateComment {
+pub struct ThreadInput {
     pub body: String,
 }
 
@@ -192,41 +187,18 @@ pub struct ConnectCybion {
     pub api_key: Option<String>,
 }
 
+/// The reporter Agent writes what it found on the machine.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AgentComment {
+pub struct AgentEvidence {
     pub body: String,
-    /// `comment` (default) or `evidence` (the reporter Agent's findings).
-    #[serde(default)]
-    pub kind: Option<String>,
 }
 
+/// The resolver Agent's single verb: conclude and close in one call.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AgentClose {
-    #[serde(default)]
-    pub body: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct QueueTicket {
-    pub id: String,
-    pub number: i64,
-    pub title: String,
-    pub project: String,
-    pub reporter: String,
-    pub url: String,
-    pub updated_at: i64,
-    pub comments: i64,
-    pub summary: String,
-    pub evidence: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct QueueView {
-    pub project: String,
-    pub total_open: i64,
-    pub pending: Vec<QueueTicket>,
+pub struct AgentResolve {
+    pub resolution: String,
 }
 
 /// Collapses whitespace and truncates to `limit` characters on a char boundary.
@@ -251,8 +223,13 @@ pub fn title_from_body(body: &str) -> String {
     excerpt(line, 80)
 }
 
-pub fn is_agent(kind: &str) -> bool {
-    matches!(kind, "reporter_agent" | "resolver_agent")
+/// How a closer is named in the ticket page.
+pub fn closer_label(kind: &str) -> String {
+    match kind {
+        "resolver_agent" => "修复 Agent".to_owned(),
+        "user" => "用户".to_owned(),
+        _ => "系统".to_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -274,11 +251,10 @@ mod tests {
     }
 
     #[test]
-    fn agent_author_kinds_are_exactly_the_two_agents() {
-        assert!(is_agent("reporter_agent"));
-        assert!(is_agent("resolver_agent"));
-        for kind in ["user", "system", ""] {
-            assert!(!is_agent(kind), "{kind}");
-        }
+    fn a_title_comes_from_the_first_non_empty_line() {
+        assert_eq!(
+            title_from_body("\n  充值回调偶发超时 \n第二行"),
+            "充值回调偶发超时"
+        );
     }
 }

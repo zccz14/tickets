@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- One Cybion API key per user. The key is sealed with the deployment's local
 -- secret (see crypto::SecretBox) so a copy of the database alone reveals none.
+-- Both sides of a Ticket use one: reporters to run the investigation, owners to
+-- push a resolver Thread.
 CREATE TABLE IF NOT EXISTS cybion_accounts (
   user_id         TEXT PRIMARY KEY,
   api_key_cipher  TEXT NOT NULL,
@@ -30,6 +32,9 @@ CREATE TABLE IF NOT EXISTS cybion_accounts (
   last_error      TEXT
 );
 
+-- A project carries no resolver configuration at all: no Worker, no key, no
+-- schedule. Being submitted is enough — the Ticket is pushed to the owner's own
+-- Cybion account, which picks its machine like any other Thread.
 CREATE TABLE IF NOT EXISTS projects (
   id                     TEXT PRIMARY KEY,
   owner_user_id          TEXT NOT NULL,
@@ -39,12 +44,7 @@ CREATE TABLE IF NOT EXISTS projects (
   visibility             TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('public','private')),
   created_at             INTEGER NOT NULL,
   updated_at             INTEGER NOT NULL,
-  ticket_counter         INTEGER NOT NULL DEFAULT 0,
-  resolver_key_hash      TEXT,
-  resolver_key_hint      TEXT,
-  resolver_key_created_at INTEGER,
-  resolver_thread_url    TEXT,
-  resolver_machine_id    TEXT
+  ticket_counter         INTEGER NOT NULL DEFAULT 0
 );
 
 -- Who may see a private project besides its owner. A public project ignores
@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS project_grants (
   PRIMARY KEY(project_id, user_id)
 );
 
+-- A Ticket carries exactly three pieces of text: what the reporter saw
+-- (`body`), what the reporter Agent measured (`evidence`), and what the
+-- resolver Agent did (`resolution`). There is no comment timeline.
 CREATE TABLE IF NOT EXISTS tickets (
   id                          TEXT PRIMARY KEY,
   project_id                  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -70,32 +73,27 @@ CREATE TABLE IF NOT EXISTS tickets (
   closed_at                   INTEGER,
   closed_by_kind              TEXT,
   closed_by_user_id           TEXT,
-  last_reporter_at            INTEGER NOT NULL DEFAULT 0,
-  last_resolver_at            INTEGER NOT NULL DEFAULT 0,
+  evidence                    TEXT,
+  evidence_at                 INTEGER,
+  resolution                  TEXT,
+  resolution_at               INTEGER,
   reporter_thread_id          TEXT,
   reporter_thread_owner       TEXT,
   reporter_agent_token_hash   TEXT,
   reporter_agent_token_hint   TEXT,
   reporter_thread_error       TEXT,
+  resolver_thread_id          TEXT,
+  resolver_thread_owner       TEXT,
+  resolver_agent_token_hash   TEXT,
+  resolver_agent_token_hint   TEXT,
+  resolver_thread_error       TEXT,
+  resolver_dispatched_at      INTEGER,
   UNIQUE(project_id, number)
 );
 
-CREATE TABLE IF NOT EXISTS comments (
-  id             TEXT PRIMARY KEY,
-  ticket_id      TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
-  kind           TEXT NOT NULL,
-  author_kind    TEXT NOT NULL,
-  author_user_id TEXT,
-  author_label   TEXT,
-  body           TEXT NOT NULL,
-  created_at     INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_comments_ticket   ON comments(ticket_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_project_grants_user ON project_grants(user_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_project   ON tickets(project_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tickets_reporter  ON tickets(reporter_user_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_tickets_resolver  ON tickets(project_id, status, last_resolver_at, last_reporter_at);
 "#;
 
 pub async fn connect(database_path: &Path) -> anyhow::Result<sqlx::SqlitePool> {
@@ -110,21 +108,62 @@ pub async fn connect(database_path: &Path) -> anyhow::Result<sqlx::SqlitePool> {
         .await?;
 
     sqlx::raw_sql(SCHEMA).execute(&pool).await?;
-    // Columns added after the first release: `CREATE TABLE IF NOT EXISTS` leaves
-    // an existing database untouched, so each one is added explicitly.
-    ensure_column(&pool, "cybion_accounts", "key_id", "TEXT").await?;
-    ensure_column(&pool, "projects", "resolver_machine_id", "TEXT").await?;
-    // Projects used to be readable by every signed-in user, so existing rows are
-    // migrated as public. Fresh databases get the `private` default above; the
-    // application always binds the value explicitly on insert.
+    migrate(&pool).await?;
+    Ok(pool)
+}
+
+/// Brings a database created by an older build up to the current model.
+///
+/// `CREATE TABLE IF NOT EXISTS` leaves an existing database untouched, so new
+/// columns are added one by one and the columns of the removed polling
+/// protocol — queue watermarks, the project-scoped resolver key, the Ultimate
+/// Machine link, the comment timeline — are dropped. Dropping them is
+/// intentional: their contents describe a design the code no longer has.
+async fn migrate(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
+    for (table, column, definition) in [
+        ("tickets", "evidence", "TEXT"),
+        ("tickets", "evidence_at", "INTEGER"),
+        ("tickets", "resolution", "TEXT"),
+        ("tickets", "resolution_at", "INTEGER"),
+        ("tickets", "resolver_thread_id", "TEXT"),
+        ("tickets", "resolver_thread_owner", "TEXT"),
+        ("tickets", "resolver_agent_token_hash", "TEXT"),
+        ("tickets", "resolver_agent_token_hint", "TEXT"),
+        ("tickets", "resolver_thread_error", "TEXT"),
+        ("tickets", "resolver_dispatched_at", "INTEGER"),
+    ] {
+        ensure_column(pool, table, column, definition).await?;
+    }
+
+    // `visibility` arrived after the first release: existing projects were
+    // readable by everyone, so they migrate as public while fresh rows take the
+    // `private` default above.
     ensure_column(
-        &pool,
+        pool,
         "projects",
         "visibility",
         "TEXT NOT NULL DEFAULT 'public'",
     )
     .await?;
-    Ok(pool)
+
+    sqlx::raw_sql("DROP INDEX IF EXISTS idx_tickets_resolver")
+        .execute(pool)
+        .await?;
+    sqlx::raw_sql("DROP TABLE IF EXISTS comments")
+        .execute(pool)
+        .await?;
+    for (table, column) in [
+        ("tickets", "last_reporter_at"),
+        ("tickets", "last_resolver_at"),
+        ("projects", "resolver_key_hash"),
+        ("projects", "resolver_key_hint"),
+        ("projects", "resolver_key_created_at"),
+        ("projects", "resolver_thread_url"),
+        ("projects", "resolver_machine_id"),
+    ] {
+        drop_column(pool, table, column).await?;
+    }
+    Ok(())
 }
 
 async fn ensure_column(
@@ -133,20 +172,34 @@ async fn ensure_column(
     column: &str,
     definition: &str,
 ) -> anyhow::Result<()> {
-    let exists: bool = sqlx::query_scalar(&format!(
+    if column_exists(pool, table, column).await? {
+        return Ok(());
+    }
+    sqlx::raw_sql(&format!(
+        "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+    ))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn drop_column(pool: &sqlx::SqlitePool, table: &str, column: &str) -> anyhow::Result<()> {
+    if !column_exists(pool, table, column).await? {
+        return Ok(());
+    }
+    sqlx::raw_sql(&format!("ALTER TABLE {table} DROP COLUMN {column}"))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn column_exists(pool: &sqlx::SqlitePool, table: &str, column: &str) -> anyhow::Result<bool> {
+    Ok(sqlx::query_scalar(&format!(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?)"
     ))
     .bind(column)
     .fetch_one(pool)
-    .await?;
-    if !exists {
-        sqlx::raw_sql(&format!(
-            "ALTER TABLE {table} ADD COLUMN {column} {definition}"
-        ))
-        .execute(pool)
-        .await?;
-    }
-    Ok(())
+    .await?)
 }
 
 /// Reads one deployment setting, falling back to the compiled default.

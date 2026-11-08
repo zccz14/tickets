@@ -1,14 +1,14 @@
 # Tickets
 
-**为 AI Agent 设计的工单系统。** 报障侧的 Agent 在报障人自己的机器上查清现场，修复侧的 Agent 在项目队列上持续监听，两边都通过 HTTP API 说话，人只需要看结论。
+**为 AI Agent 设计的工单系统。** 报障侧的 Agent 在报障人自己的机器上查清现场，修复侧的 Agent 在项目所有者的机器上把问题修掉，两边都通过 HTTP API 说话，人只需要看结论。
 
 - 报障人写一句「哪里不对」就够了：Cybion Thread 会用报障人自己的账号补齐环境、日志、复现步骤，写回「现场证据」。
-- 项目所有者在项目设置里挑一台 Worker，Tickets 直接在 Cybion 建好终极机器：队列里有工单才唤醒修复 Thread，没工单就保持沉默。登录令牌的受众包含 `cybion.ntnl.io`，所以密钥与机器都由后台代办，不需要任何粘贴。
+- 报障人点提交的那一刻，Tickets 用项目所有者的 Cybion 账号**直接推出**一张修复 Thread，把工单、证据和关闭接口一起交给它。没有队列、没有轮询、没有定时任务，也不用选 Worker。
 - 单个可执行文件内嵌前端，SQLite 存数据，不需要容器、不需要环境变量。
 
 线上实例：<https://tickets.ntnl.io>（Auth Mini 登录）。
 
-## 两条泳道
+## 一张工单的旅程
 
 ```mermaid
 sequenceDiagram
@@ -16,23 +16,21 @@ sequenceDiagram
     participant R as 报障人
     participant T as Tickets
     participant C as Cybion（报障人的账号）
-    participant M as 终极机器（项目所有者）
-    participant X as 修复 Thread
+    participant X as Cybion（项目所有者的账号）
 
     R->>T: 新建工单：发送第一条消息（创建草稿）
     T->>C: 用报障人授权铸出的 API Key 创建 Thread + 投递简报
-    C->>C: 在报障人的 Worker 上只读排查
+    C->>C: 在报障人的机器上只读排查
     C->>T: 写回「现场证据」（一次性 Reporter 令牌）
     R->>T: 提交工单
-    M->>T: 每 120 秒执行检查命令（Resolver 密钥）
-    T-->>M: 有工单时返回非 0 + 队列摘要
-    M->>X: 唤醒修复 Thread
-    X->>T: 读工单、评论、关闭
+    T->>X: 用所有者授权铸出的 API Key 创建修复 Thread + 推送派单简报
+    X->>T: 读工单与证据，诊断并修复
+    X->>T: 写回处理结论并关闭（一次调用，Resolver 令牌）
 ```
 
-- 左侧由**报障人自己的 Cybion 账号**驱动，所以 Thread 只属于报障人，也只有报障人能打开。
-- 右侧由**项目所有者的终极机器**驱动，检查命令是幂等的：队列空退出 0，有工单退出 1。
-- 两侧的权限由两种 `tk_` 开头的 Agent 令牌限定：Reporter 只能碰创建它的那张工单，Resolver 只能碰自己那个项目。
+一张工单只有三段文字：**正文**（报障人写的现象）、**现场证据**（报障 Agent 在机器上量到的）、**处理结论**（修复 Agent 做完的）。没有评论区。
+
+两侧的权限由两种 `tk_` 开头的 Agent 令牌限定，两者都只绑定自己那张工单：Reporter 只能写证据，Resolver 只能写结论并关单。重新打开工单或报障 Agent 补写了新证据时，Tickets 会往同一张修复 Thread 里再推一条消息——仍然是推送，不是轮询。
 
 产品语义见 [PRODUCT.md](PRODUCT.md)，实现与部署见 [DESIGN.md](DESIGN.md)。
 
@@ -70,7 +68,7 @@ cargo run -- --data-dir /tmp/tickets-dev --port 8080 --public-base-url http://12
 | `--listen host:port` | `0.0.0.0:8080` | 监听地址 |
 | `--port n` | — | 只改端口的快捷方式 |
 | `--data-dir path` | `./data` | 数据库与 `secret.key` 所在目录 |
-| `--public-base-url url` | 数据库中的值或 `https://tickets.ntnl.io` | 写进简报与队列的对外地址 |
+| `--public-base-url url` | 数据库中的值或 `https://tickets.ntnl.io` | 写进简报的对外地址 |
 | `--dev-user <subject>` | 无 | 关闭 Auth Mini，仅限本地 |
 
 部署级的地址保存在 SQLite 的 `settings` 表里，启动时读取一次：
@@ -98,37 +96,33 @@ sqlite3 /tmp/tickets-dev/tickets.db \
 | --- | --- | --- |
 | GET | `/api/health`、`/api/meta` | 公开：健康检查与服务地址 |
 | GET | `/api/me`、`/api/me/tickets` | 当前用户与其工单 |
-| GET/PUT/DELETE | `/api/account/cybion` | 连接 / 断开报障人的 Cybion 账号（PUT 自动铸 Key） |
-| GET | `/api/cybion/workers` | 当前账号可用的 Cybion Worker |
-| GET/POST/PATCH/DELETE | `/api/projects/{id}/resolver` | 查看 / 接入 / 暂停或启用 / 断开终极机器（仅所有者） |
-| POST | `/api/projects/{id}/resolver/run` | 让终极机器立即跑一次 |
+| GET/PUT/DELETE | `/api/account/cybion` | 连接 / 断开本人的 Cybion 账号（PUT 自动铸 Key） |
 | GET/POST | `/api/projects` | 可见项目列表 / 新建（默认私有） |
-| GET/PATCH | `/api/projects/{id}` | 项目详情 / 修改可见性等（仅所有者） |
+| GET/PATCH | `/api/projects/{id}` | 项目详情 / 修改名称、描述、可见性（仅所有者） |
 | GET/POST | `/api/projects/{id}/grants` | 私有项目的授权成员 / 添加成员（仅所有者） |
 | DELETE | `/api/projects/{id}/grants/{user_id}` | 移除授权成员（仅所有者） |
-| POST/DELETE | `/api/projects/{id}/resolver-key` | 手动生成 / 吊销修复密钥（仅所有者；界面已改用 `/resolver`） |
 | GET/POST | `/api/projects/{id}/tickets` | 工单列表（`?status=open\|closed\|draft\|all`）/ 新建（省略 `title` 时取第一条消息的第一行） |
 | GET/PATCH | `/api/tickets/{id}` | 工单详情 / 修改标题正文（仅报障人） |
-| POST | `/api/tickets/{id}/submit`、`close`、`reopen` | 状态流转 |
-| POST | `/api/tickets/{id}/comments` | 评论 |
+| POST | `/api/tickets/{id}/submit` | 提交草稿：立刻推给修复 Agent |
+| POST | `/api/tickets/{id}/close`、`reopen` | 关闭 / 重新打开（重开会再推一次修复 Thread） |
+| POST | `/api/tickets/{id}/dispatch` | 派发失败后由所有者重试（仅所有者） |
 | GET/POST | `/api/tickets/{id}/thread` | 查看 / 补建现场调查 Thread |
 | GET/POST | `/api/tickets/{id}/thread/live` | 实时读取 Thread 历史（`?after=`）/ 报障人直接向 Agent 发消息 |
 
-Agent 侧：
+Agent 侧（两种令牌都只绑定一张工单）：
 
 | 方法 | 路径 | 作用域 |
 | --- | --- | --- |
 | GET | `/api/agent/whoami` | 两者 |
-| GET | `/api/agent/queue` | Resolver |
-| GET | `/api/agent/tickets/{id}` | 两者，但只能读自己作用域内的工单 |
-| POST | `/api/agent/tickets/{id}/comments` | 两者；`kind=evidence` 仅 Reporter |
-| POST | `/api/agent/tickets/{id}/close` | 两者 |
+| GET | `/api/agent/tickets/{id}` | 两者，但只能读自己那张工单 |
+| POST | `/api/agent/tickets/{id}/evidence` | 仅 Reporter：写回现场证据 |
+| POST | `/api/agent/tickets/{id}/resolve` | 仅 Resolver：写回处理结论并关闭 |
 
 ## 测试
 
 ```bash
 cargo test                      # 单元 + 集成：真路由 + 假 Cybion
-cd web && pnpm test             # i18n、命令生成器（会真的执行生成的 bash）
+cd web && pnpm test             # i18n、样式、面板布局
 cd web && pnpm run check        # 测试 + 类型 + 构建
 ```
 
@@ -156,7 +150,7 @@ flowchart LR
 ## 目录结构
 
 ```
-src/            后端：Axum 路由、SQLite、Auth Mini、Cybion 客户端、简报生成
+src/            后端：Axum 路由、SQLite、Auth Mini、Cybion 客户端、两侧简报
 web/            前端：React + Vite + Tailwind + shadcn + @zccz14/ux
 tests/          集成测试：真路由 + 假 Cybion 服务
 deploy/         主机初始化、systemd 单元、Caddyfile、实例发布脚本

@@ -28,8 +28,8 @@ export type Project = {
   open_tickets: number
   total_tickets: number
   resolver_ready: boolean
-  resolver_thread_url: string | null
-  resolver_machine_id: string | null
+  resolver_worker_id: string | null
+  resolver_worker_label: string | null
   is_owner: boolean
   visibility: ProjectVisibility
   is_member: boolean
@@ -47,18 +47,10 @@ export type CybionWorker = {
   last_seen_at: number | null
 }
 
-export type Machine = {
-  id: string
-  name: string
-  worker_id: string
+/** Which Worker this project's resolver Agent is told to use. */
+export type ResolverView = {
+  worker_id: string | null
   worker_label: string | null
-  interval_seconds: number
-  thread_id: string
-  thread_title: string | null
-  enabled: boolean
-  last_run_at: number | null
-  last_exit: number | null
-  created_at: number
 }
 
 export type TicketStatus = "draft" | "open" | "closed"
@@ -74,20 +66,12 @@ export type TicketSummary = {
   reporter_name: string | null
   created_at: number
   updated_at: number
-  comment_count: number
   has_evidence: boolean
+  has_resolution: boolean
   thread_id: string | null
 }
 
-export type Comment = {
-  id: string
-  kind: "comment" | "evidence" | "system"
-  author_kind: "user" | "reporter_agent" | "resolver_agent" | "system"
-  author_user_id: string | null
-  author_name: string | null
-  body: string
-  created_at: number
-}
+export type AuthorKind = "user" | "reporter_agent" | "resolver_agent" | "system"
 
 export type ThreadInfo = {
   thread_id: string | null
@@ -118,13 +102,16 @@ export type Ticket = {
   closed_by_name: string | null
   is_reporter: boolean
   is_project_owner: boolean
-  comments: Comment[]
+  /** What the reporter Agent measured on the reporter's machine. */
+  evidence: string | null
+  evidence_at: number | null
+  /** The resolver Agent's conclusion, written when it closes the ticket. */
+  resolution: string | null
+  resolution_at: number | null
   reporter_thread: ThreadInfo
-  resolver_thread_url: string | null
-  agent: { comments_url: string; ticket_url: string; close_url: string }
+  resolver_thread: ThreadInfo
+  agent: { ticket_url: string; evidence_url: string; resolve_url: string }
 }
-
-export type ResolverKey = { token: string; hint: string }
 
 /** Builds the fetch wrapper: bearer token, JSON errors, one retry on 401. */
 export function createRequest(

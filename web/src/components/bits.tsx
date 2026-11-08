@@ -4,7 +4,7 @@ import type { ReactNode } from "react"
 
 import { useCopy } from "@/lib/session"
 import { cn } from "@/lib/utils"
-import type { Comment, ProjectVisibility } from "@/lib/api"
+import type { AuthorKind, ProjectVisibility } from "@/lib/api"
 
 export function VisibilityBadge({
   visibility,
@@ -54,7 +54,7 @@ export function StatusBadge({ status }: { status: "draft" | "open" | "closed" })
   )
 }
 
-const AUTHOR_STYLE: Record<Comment["author_kind"], { label: string; className: string }> = {
+const AUTHOR_STYLE: Record<AuthorKind, { label: string; className: string }> = {
   user: { label: "", className: "" },
   reporter_agent: {
     label: "reporting-agent",
@@ -67,7 +67,7 @@ const AUTHOR_STYLE: Record<Comment["author_kind"], { label: string; className: s
   system: { label: "", className: "" },
 }
 
-export function AuthorTag({ kind }: { kind: Comment["author_kind"] }) {
+export function AuthorTag({ kind }: { kind: AuthorKind }) {
   const style = AUTHOR_STYLE[kind]
   if (!style.label) return null
   return (
@@ -87,9 +87,9 @@ export function AuthorName({
   userId,
   name,
 }: {
-  kind: Comment["author_kind"]
-  userId: string | null
-  name: string | null
+  kind: AuthorKind
+  userId?: string | null
+  name?: string | null
 }) {
   const { t } = useCopy()
   if (kind === "reporter_agent") return <span className="font-medium">报障 Agent</span>
@@ -97,7 +97,7 @@ export function AuthorName({
   if (kind === "system") return <span className="font-medium">{name ?? "系统"}</span>
   // Linkit owns how a person is shown: avatar, username and the profile popup.
   // The server-side display name only stands in when there is no user behind
-  // the comment at all.
+  // the text at all.
   if (userId) return <LinkitUserInfo userId={userId} compact />
   return <span className="font-medium">{name ?? t("ticketReporter")}</span>
 }

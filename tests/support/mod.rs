@@ -41,7 +41,6 @@ pub struct MockState {
     input_status: Mutex<u16>,
     read_status: Mutex<u16>,
     seq: Mutex<u64>,
-    machines: Mutex<HashMap<String, Value>>,
     history: Mutex<Vec<Value>>,
     response: Mutex<Option<Value>>,
     browser_input_status: Mutex<u16>,
@@ -110,18 +109,42 @@ impl MockCybion {
         self.state.browser_inputs.lock().unwrap().clone()
     }
 
-    /// The briefing posted into the Thread that mentions this ticket.
-    pub fn briefing_for(&self, ticket_id: &str) -> String {
-        self.try_briefing_for(ticket_id)
-            .unwrap_or_else(|| panic!("没有找到包含工单 {ticket_id} 的调查简报"))
-    }
-
-    pub fn try_briefing_for(&self, ticket_id: &str) -> Option<String> {
+    /// Every message Tickets pushed into a Thread, oldest first.
+    pub fn inputs(&self) -> Vec<String> {
         self.calls()
             .into_iter()
             .filter(|call| call.path.ends_with("/inputs"))
             .filter_map(|call| call.body["input"].as_str().map(str::to_owned))
-            .find(|input| input.contains(ticket_id))
+            .collect()
+    }
+
+    /// The investigation briefing the reporter's Thread received.
+    pub fn reporter_briefing(&self, ticket_id: &str) -> String {
+        self.inputs()
+            .into_iter()
+            .find(|input| input.contains("<!-- tickets-briefing -->") && input.contains(ticket_id))
+            .unwrap_or_else(|| panic!("没有找到工单 {ticket_id} 的报障简报"))
+    }
+
+    /// The dispatch Tickets pushed to the owner's resolver Thread.
+    pub fn resolver_briefing(&self, ticket_id: &str) -> String {
+        self.inputs()
+            .into_iter()
+            .find(|input| {
+                input.contains("<!-- tickets-resolver-briefing -->") && input.contains(ticket_id)
+            })
+            .unwrap_or_else(|| panic!("没有找到工单 {ticket_id} 的修复简报"))
+    }
+
+    pub fn try_resolver_briefing(&self, ticket_id: &str) -> Option<String> {
+        self.inputs().into_iter().find(|input| {
+            input.contains("<!-- tickets-resolver-briefing -->") && input.contains(ticket_id)
+        })
+    }
+
+    /// The most recent message pushed into a Thread, whatever it says.
+    pub fn last_input(&self) -> String {
+        self.inputs().pop().unwrap_or_default()
     }
 }
 
@@ -265,15 +288,6 @@ pub async fn start_mock_cybion() -> MockCybion {
         .route("/api/threads/{id}/inputs", post(browser_input))
         .route("/api/api-keys", post(create_api_key))
         .route("/api/api-keys/{id}", delete(delete_api_key))
-        .route("/api/workers", get(list_workers))
-        .route("/api/machines", get(list_machines).post(create_machine))
-        .route(
-            "/api/machines/{id}",
-            get(read_machine)
-                .patch(update_machine)
-                .delete(delete_machine),
-        )
-        .route("/api/machines/{id}/run", post(run_machine))
         .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -414,35 +428,64 @@ impl App {
         ticket
     }
 
-    pub async fn create_resolver_key(&self, project_id: &str) -> String {
-        let (status, key) = self
-            .post(&format!("/api/projects/{project_id}/resolver-key"), None)
-            .await;
-        assert_eq!(status, StatusCode::OK, "生成修复密钥失败: {key}");
-        key["token"].as_str().expect("修复密钥").to_owned()
-    }
-
-    /// Sets the queue watermark columns directly, so ordering tests do not
-    /// depend on the wall clock.
-    pub async fn stamp(&self, ticket_id: &str, reporter_at: i64, resolver_at: i64) {
-        sqlx::query("UPDATE tickets SET last_reporter_at=?, last_resolver_at=? WHERE id=?")
-            .bind(reporter_at)
-            .bind(resolver_at)
-            .bind(ticket_id)
-            .execute(&self.state.db)
-            .await
-            .expect("写入队列水位");
-    }
-
-    pub async fn comment(&self, ticket_id: &str, body: &str) -> Value {
-        let (status, ticket) = self
-            .post(
-                &format!("/api/tickets/{ticket_id}/comments"),
-                Some(json!({ "body": body })),
+    /// Connects the app's user to Cybion through the mock, which mints a key.
+    /// The bearer is the person's Auth Mini token; `--dev-user` does not verify
+    /// it, but the app forwards it to Cybion to mint the key.
+    pub async fn connect_cybion(&self) {
+        let (status, me) = self
+            .call_with(
+                Some("jwt-browser"),
+                "PUT",
+                "/api/account/cybion",
+                Some(json!({})),
             )
             .await;
-        assert_eq!(status, StatusCode::OK, "评论失败: {ticket}");
-        ticket
+        assert_eq!(status, StatusCode::OK, "连接 Cybion 失败: {me}");
+        assert_eq!(me["cybion_connected"], true);
+    }
+
+    /// The reporter Agent's only write.
+    pub async fn evidence(&self, token: &str, ticket_id: &str, body: &str) -> (StatusCode, Value) {
+        self.call_with(
+            Some(token),
+            "POST",
+            &format!("/api/agent/tickets/{ticket_id}/evidence"),
+            Some(json!({ "body": body })),
+        )
+        .await
+    }
+
+    /// The resolver Agent's only write: conclude and close.
+    pub async fn resolve(
+        &self,
+        token: &str,
+        ticket_id: &str,
+        resolution: &str,
+    ) -> (StatusCode, Value) {
+        self.call_with(
+            Some(token),
+            "POST",
+            &format!("/api/agent/tickets/{ticket_id}/resolve"),
+            Some(json!({ "resolution": resolution })),
+        )
+        .await
+    }
+
+    /// Reads a ticket until `check` accepts it, so background work can settle.
+    pub async fn wait_for_ticket(
+        &self,
+        ticket_id: &str,
+        what: &str,
+        check: impl Fn(&Value) -> bool,
+    ) -> Value {
+        for _ in 0..300 {
+            let (status, ticket) = self.get(&format!("/api/tickets/{ticket_id}")).await;
+            if status == StatusCode::OK && check(&ticket) {
+                return ticket;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("等待超时: {what}");
     }
 }
 
@@ -617,139 +660,4 @@ async fn delete_api_key(
         body: Value::Null,
     });
     StatusCode::NO_CONTENT.into_response()
-}
-
-async fn list_workers(State(state): State<Arc<MockState>>, headers: HeaderMap) -> Json<Value> {
-    state.calls.lock().unwrap().push(Call {
-        method: "GET".to_owned(),
-        path: "/api/workers".to_owned(),
-        bearer: bearer(&headers),
-        body: Value::Null,
-    });
-    Json(json!([
-        { "id": "worker-1", "label": "MacMini", "status": "online", "owner_user_id": "alice", "last_seen_at": 10 },
-        { "id": "worker-2", "label": "MacBookAir", "status": "offline", "owner_user_id": "alice" }
-    ]))
-}
-
-async fn create_machine(
-    State(state): State<Arc<MockState>>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> Response {
-    state.calls.lock().unwrap().push(Call {
-        method: "POST".to_owned(),
-        path: "/api/machines".to_owned(),
-        bearer: bearer(&headers),
-        body: body.clone(),
-    });
-    let id = format!("machine-{:04}", state.machines.lock().unwrap().len() + 1);
-    let machine = json!({
-        "id": id,
-        "name": body["name"],
-        "worker_id": body["worker_id"],
-        "worker_label": "MacMini",
-        "command": body["command"],
-        "intent": body["intent"],
-        "interval_seconds": body["interval_seconds"],
-        "thread_id": format!("thread-{id}"),
-        "thread_title": "终极机器 · 测试",
-        "enabled": true,
-        "last_run_at": null,
-        "last_exit": null,
-        "created_at": 1
-    });
-    state.machines.lock().unwrap().insert(id, machine.clone());
-    Json(machine).into_response()
-}
-
-async fn read_machine(
-    State(state): State<Arc<MockState>>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-) -> Response {
-    state.calls.lock().unwrap().push(Call {
-        method: "GET".to_owned(),
-        path: format!("/api/machines/{id}"),
-        bearer: bearer(&headers),
-        body: Value::Null,
-    });
-    match state.machines.lock().unwrap().get(&id).cloned() {
-        Some(machine) => Json(machine).into_response(),
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "machine not found" })),
-        )
-            .into_response(),
-    }
-}
-
-async fn update_machine(
-    State(state): State<Arc<MockState>>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> Response {
-    state.calls.lock().unwrap().push(Call {
-        method: "PATCH".to_owned(),
-        path: format!("/api/machines/{id}"),
-        bearer: bearer(&headers),
-        body: body.clone(),
-    });
-    let mut machines = state.machines.lock().unwrap();
-    let Some(machine) = machines.get_mut(&id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if let Some(enabled) = body["enabled"].as_bool() {
-        machine["enabled"] = json!(enabled);
-    }
-    Json(machine.clone()).into_response()
-}
-
-async fn delete_machine(
-    State(state): State<Arc<MockState>>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-) -> Response {
-    state.calls.lock().unwrap().push(Call {
-        method: "DELETE".to_owned(),
-        path: format!("/api/machines/{id}"),
-        bearer: bearer(&headers),
-        body: Value::Null,
-    });
-    if state.machines.lock().unwrap().remove(&id).is_some() {
-        StatusCode::NO_CONTENT.into_response()
-    } else {
-        StatusCode::NOT_FOUND.into_response()
-    }
-}
-
-async fn run_machine(
-    State(state): State<Arc<MockState>>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-) -> Response {
-    state.calls.lock().unwrap().push(Call {
-        method: "POST".to_owned(),
-        path: format!("/api/machines/{id}/run"),
-        bearer: bearer(&headers),
-        body: Value::Null,
-    });
-    if state.machines.lock().unwrap().contains_key(&id) {
-        StatusCode::ACCEPTED.into_response()
-    } else {
-        StatusCode::NOT_FOUND.into_response()
-    }
-}
-
-async fn list_machines(State(state): State<Arc<MockState>>, headers: HeaderMap) -> Json<Value> {
-    state.calls.lock().unwrap().push(Call {
-        method: "GET".to_owned(),
-        path: "/api/machines".to_owned(),
-        bearer: bearer(&headers),
-        body: Value::Null,
-    });
-    Json(Value::Array(
-        state.machines.lock().unwrap().values().cloned().collect(),
-    ))
 }

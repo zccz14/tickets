@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { MessageSquareIcon, PaperclipIcon } from "lucide-react"
+import { CheckCircle2Icon, PaperclipIcon } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 
 import { EmptyState, PageHeader, StatusBadge } from "@/components/bits"
@@ -40,15 +40,14 @@ export function MyTicketsPage() {
             >
               <StatusBadge status={ticket.status} />
               <span className="min-w-0 flex-1 truncate text-sm font-medium">{ticket.title}</span>
-              <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+              <span className="max-sm:hidden shrink-0 text-xs text-muted-foreground">
                 {ticket.project_name} #{ticket.number}
               </span>
               {ticket.has_evidence ? <PaperclipIcon className="size-3 shrink-0 text-reporter" /> : null}
-              <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                <MessageSquareIcon className="size-3.5" />
-                {ticket.comment_count}
-              </span>
-              <span className="hidden w-20 shrink-0 text-right text-xs text-muted-foreground sm:inline">
+              {ticket.has_resolution ? (
+                <CheckCircle2Icon className="size-3 shrink-0 text-resolver" />
+              ) : null}
+              <span className="max-sm:hidden w-20 shrink-0 text-right text-xs text-muted-foreground">
                 {relativeTime(lang, ticket.updated_at)}
               </span>
             </button>

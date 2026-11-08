@@ -8,7 +8,7 @@ use sqlx::Row;
 use crate::{
     AppState,
     auth::CurrentUser,
-    crypto::{hash_token, new_id, new_token, now, token_hint},
+    crypto::{new_id, now},
     error::{AppError, AppResult},
     model::{CreateGrant, CreateProject, GrantView, ProjectView, UpdateProject},
 };
@@ -20,15 +20,12 @@ pub struct ProjectRow {
     pub owner_user_id: String,
     pub created_at: i64,
     pub updated_at: i64,
-    pub resolver_key_hash: Option<String>,
-    pub resolver_thread_url: Option<String>,
-    pub resolver_machine_id: Option<String>,
     pub visibility: String,
 }
 
 pub async fn load_project(state: &AppState, id: &str) -> AppResult<ProjectRow> {
     let row = sqlx::query(
-        "SELECT id,name,description,owner_user_id,created_at,updated_at,resolver_key_hash,resolver_thread_url,resolver_machine_id,visibility FROM projects WHERE id=?",
+        "SELECT id,name,description,owner_user_id,created_at,updated_at,visibility FROM projects WHERE id=?",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -41,10 +38,7 @@ pub async fn load_project(state: &AppState, id: &str) -> AppResult<ProjectRow> {
         owner_user_id: row.get(3),
         created_at: row.get(4),
         updated_at: row.get(5),
-        resolver_key_hash: row.get(6),
-        resolver_thread_url: row.get(7),
-        resolver_machine_id: row.get(8),
-        visibility: row.get(9),
+        visibility: row.get(6),
     })
 }
 
@@ -97,7 +91,8 @@ fn validate_name(name: &str) -> AppResult<String> {
 
 const PROJECT_COLUMNS: &str = "
 SELECT p.id,p.name,p.description,p.owner_user_id,p.created_at,p.updated_at,
-       p.resolver_key_hash,p.resolver_thread_url,p.resolver_machine_id,u.display_name,
+       EXISTS(SELECT 1 FROM cybion_accounts a WHERE a.user_id=p.owner_user_id) AS resolver_ready,
+       u.display_name,
        (SELECT COUNT(*) FROM tickets t WHERE t.project_id=p.id AND t.status='open') AS open_tickets,
        (SELECT COUNT(*) FROM tickets t WHERE t.project_id=p.id AND t.status<>'draft') AS total_tickets,
        p.visibility,
@@ -116,14 +111,12 @@ fn project_view(row: &sqlx::sqlite::SqliteRow, viewer: &str) -> ProjectView {
         owner_user_id,
         created_at: row.get(4),
         updated_at: row.get(5),
-        resolver_ready: row.get::<Option<String>, _>(6).is_some(),
-        resolver_thread_url: row.get(7),
-        resolver_machine_id: row.get(8),
-        owner_name: row.get(9),
-        open_tickets: row.get(10),
-        total_tickets: row.get(11),
-        visibility: row.get(12),
-        is_member: row.get::<i64, _>(13) != 0,
+        resolver_ready: row.get::<i64, _>(6) != 0,
+        owner_name: row.get(7),
+        open_tickets: row.get(8),
+        total_tickets: row.get(9),
+        visibility: row.get(10),
+        is_member: row.get::<i64, _>(11) != 0,
     }
 }
 
@@ -233,88 +226,12 @@ pub async fn update(
             .execute(&state.db)
             .await?;
     }
-    if let Some(thread_url) = input.resolver_thread_url.as_deref() {
-        let normalized = normalize_thread_url(thread_url)?;
-        sqlx::query("UPDATE projects SET resolver_thread_url=? WHERE id=?")
-            .bind(normalized)
-            .bind(&id)
-            .execute(&state.db)
-            .await?;
-    }
     sqlx::query("UPDATE projects SET updated_at=? WHERE id=?")
         .bind(now())
         .bind(&id)
         .execute(&state.db)
         .await?;
     read(State(state), Extension(user), Path(id)).await
-}
-
-/// Accepts a pasted Cybion link (`…/#/threads/<id>`) or a bare thread id and
-/// stores the canonical link.
-fn normalize_thread_url(raw: &str) -> AppResult<Option<String>> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    let candidate = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        trimmed.to_owned()
-    } else {
-        if !trimmed
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-')
-        {
-            return Err(AppError::bad_request("无法识别的 Cybion Thread 链接"));
-        }
-        return Ok(Some(trimmed.to_owned()));
-    };
-    if !candidate.contains("/threads/") {
-        return Err(AppError::bad_request(
-            "链接需要指向 Cybion Thread，形如 https://cybion.ntnl.io/#/threads/<id>",
-        ));
-    }
-    Ok(Some(candidate))
-}
-
-pub async fn create_resolver_key(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(id): Path<String>,
-) -> AppResult<Json<Value>> {
-    let project = load_project(&state, &id).await?;
-    require_view(&state, &project, &user.id).await?;
-    if project.owner_user_id != user.id {
-        return Err(AppError::forbidden("只有项目所有者可以管理修复 Agent"));
-    }
-    let token = new_token();
-    sqlx::query(
-        "UPDATE projects SET resolver_key_hash=?, resolver_key_hint=?, resolver_key_created_at=?, updated_at=? WHERE id=?",
-    )
-    .bind(hash_token(&token))
-    .bind(token_hint(&token))
-    .bind(now())
-    .bind(now())
-    .bind(&id)
-    .execute(&state.db)
-    .await?;
-    Ok(Json(json!({ "token": token, "hint": token_hint(&token) })))
-}
-
-pub async fn revoke_resolver_key(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(id): Path<String>,
-) -> AppResult<Json<Value>> {
-    let project = load_project(&state, &id).await?;
-    require_view(&state, &project, &user.id).await?;
-    if project.owner_user_id != user.id {
-        return Err(AppError::forbidden("只有项目所有者可以管理修复 Agent"));
-    }
-    sqlx::query("UPDATE projects SET resolver_key_hash=NULL, resolver_key_hint=NULL, resolver_key_created_at=NULL, updated_at=? WHERE id=?")
-        .bind(now())
-        .bind(&id)
-        .execute(&state.db)
-        .await?;
-    Ok(Json(json!({ "revoked": true })))
 }
 
 /// The owner's grant list. Grants only matter for private projects, but they are
