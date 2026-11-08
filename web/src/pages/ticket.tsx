@@ -114,6 +114,10 @@ export function TicketPage() {
     data.is_project_owner &&
     data.status === "open" &&
     (!data.resolver_thread.thread_id || Boolean(data.resolver_thread.error))
+  // The reporter's own words are the first user message of their Thread, so the
+  // panel already carries them. Only a reader without that panel — the project
+  // owner, or a reporter whose Thread failed to open — needs the body here.
+  const showsThread = data.is_reporter && Boolean(threadInfo.thread_id || data.status !== "closed")
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5">
@@ -160,15 +164,17 @@ export function TicketPage() {
             </div>
           ) : null}
 
-          <article className="rounded-xl border border-border/70 bg-card p-5 text-sm">
-            {data.body.trim() ? (
-              <Markdown content={data.body} />
-            ) : (
-              <p className="text-sm text-muted-foreground">—</p>
-            )}
-          </article>
+          {!showsThread || threadInfo.error ? (
+            <article className="rounded-xl border border-border/70 bg-card p-5 text-sm">
+              {data.body.trim() ? (
+                <Markdown content={data.body} />
+              ) : (
+                <p className="text-sm text-muted-foreground">—</p>
+              )}
+            </article>
+          ) : null}
 
-          {data.is_reporter && (threadInfo.thread_id || data.status !== "closed") ? (
+          {showsThread ? (
             <ThreadLivePanel ticketId={data.id} thread={threadInfo} status={data.status} />
           ) : null}
 

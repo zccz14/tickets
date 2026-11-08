@@ -50,10 +50,6 @@ async fn submitting_pushes_the_ticket_to_the_owners_resolver_thread() {
     assert_eq!(created[0].bearer.as_deref(), Some(MOCK_API_KEY));
 
     let briefing = env.mock.resolver_briefing(&id);
-    assert!(
-        briefing.contains("线上偶发 502"),
-        "简报要带现象: {briefing}"
-    );
     assert!(briefing.contains("支付网关"));
     assert!(briefing.contains("/api/agent/tickets/"));
     assert!(briefing.contains("/resolve"), "简报要给关闭入口");
@@ -66,16 +62,21 @@ async fn submitting_pushes_the_ticket_to_the_owners_resolver_thread() {
         "设备由 Agent 自己挑"
     );
 
-    // The dispatch itself is folded context; one short owner line starts it.
+    // The dispatch itself is folded context; the reporter's own words are the
+    // Thread's first user input and start the run.
+    assert!(
+        !briefing.contains("线上偶发 502"),
+        "简报不应重复现象: {briefing}"
+    );
     let mut opening = String::new();
     for _ in 0..300 {
         opening = env.mock.last_input();
-        if opening == "请处理这张工单。" {
+        if opening == "线上偶发 502，日志里是上游超时" {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    assert_eq!(opening, "请处理这张工单。");
+    assert_eq!(opening, "线上偶发 502，日志里是上游超时");
 }
 
 #[tokio::test]
