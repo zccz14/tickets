@@ -153,7 +153,7 @@ async fn a_failed_briefing_stops_before_the_opening_turn() {
 }
 
 #[tokio::test]
-async fn a_failed_opening_keeps_the_thread_and_says_so() {
+async fn a_failed_first_message_keeps_the_thread_and_says_so() {
     let env = Env::new().await;
     let user = env.app("alice").await;
     connect(&user, ALICE_KEY).await;
@@ -170,7 +170,7 @@ async fn a_failed_opening_keeps_the_thread_and_says_so() {
         broken["reporter_thread"]["error"]
             .as_str()
             .unwrap()
-            .contains("开场消息发送失败")
+            .contains("首条用户消息发送失败")
     );
 
     // The Thread exists, so asking again is a conflict rather than a duplicate.
@@ -583,10 +583,13 @@ async fn opening_a_draft_starts_its_thread_once() {
     let briefing = env.mock.reporter_briefing(&ticket_id);
     assert!(briefing.contains("草稿"), "{briefing}");
     assert!(briefing.contains("现场调查简报"), "{briefing}");
-    // The body stays in the Ticket card above the panel: the opening turn is
-    // one short line, not a copy of it.
-    assert_eq!(env.mock.inputs(), vec!["请帮我查一下这个问题。".to_owned()]);
-    assert!(!env.mock.inputs()[0].contains("现象是偶尔白屏"));
+    // The reporter's own first message is the Thread's first user input, right
+    // after the folded briefing.
+    assert_eq!(env.mock.inputs(), vec!["现象是偶尔白屏".to_owned()]);
+    assert!(
+        !briefing.contains("现象是偶尔白屏"),
+        "简报不应重复正文: {briefing}"
+    );
 
     // The next poll reads the existing Thread instead of minting another one.
     let (status, _) = bob

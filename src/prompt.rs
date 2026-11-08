@@ -6,10 +6,10 @@
 //! it specific, keep it short enough to survive compaction.
 //!
 //! A briefing travels as Cybion *context*: an activity record the conversation
-//! folds and the compiler replays as a developer message. The Thread still
-//! needs a real user turn to start, so each side also has one short opening
-//! line — the human's own words, without repeating the Ticket body the page
-//! already shows.
+//! folds and the compiler replays as a developer message. The reporter's own
+//! first message is the Thread's first user input, right after that context —
+//! so the conversation starts the way it reads: background first, then the
+//! person speaking. The briefing therefore never repeats the body.
 
 pub struct ReporterBriefing<'a> {
     pub cybion_base: String,
@@ -17,7 +17,6 @@ pub struct ReporterBriefing<'a> {
     pub project_name: &'a str,
     pub project_description: &'a str,
     pub title: &'a str,
-    pub body: &'a str,
     pub reporter: &'a str,
     pub draft: bool,
     pub api_base: &'a str,
@@ -30,11 +29,6 @@ pub fn reporter_briefing(briefing: &ReporterBriefing<'_>) -> String {
         "这份工单还是**草稿**：报障人正在补齐信息，尚未提交给修复 Agent。你的产出会直接帮他把草稿补成一份能提交的工单。"
     } else {
         "这份工单已经**提交**：修复 Agent 会读到你写回的现场报告。信息越具体，修复越快。"
-    };
-    let body = if briefing.body.trim().is_empty() {
-        "（报障人还没写正文，只有标题。）"
-    } else {
-        briefing.body.trim()
     };
     let description = briefing.project_description.trim();
     let project_block = if description.is_empty() {
@@ -50,14 +44,11 @@ pub fn reporter_briefing(briefing: &ReporterBriefing<'_>) -> String {
         r#"工单 #{number} · 现场调查简报
 
 你是工单 #{number} 的「现场调查 Agent」，服务于报障人 {reporter}。
+报障人的原话就是这条 Thread 的第一条用户消息（紧接着这条上下文），调查从那里开始。
 
 ## 工单
 {project_block}
 - 标题：{title}
-- 正文：
----
-{body}
----
 
 {stage}
 
@@ -108,7 +99,6 @@ jq -n --rawfile b /tmp/ticket-report.md '{{body:$b}}' \
         number = briefing.ticket_number,
         project_block = project_block,
         title = briefing.title,
-        body = body,
         reporter = briefing.reporter,
         stage = stage,
         api_base = briefing.api_base,
@@ -118,13 +108,13 @@ jq -n --rawfile b /tmp/ticket-report.md '{{body:$b}}' \
     )
 }
 
-/// The reporter's own first turn. The Ticket body stays in the card above the
-/// panel, so this line must not repeat it — it only starts the investigation.
-pub const REPORTER_OPENING: &str = "请帮我查一下这个问题。";
-
-/// The owner's first turn in the repair Thread. The briefing itself is already
-/// in the conversation as developer context; this line starts the run.
-pub const RESOLVER_OPENING: &str = "请处理这张工单。";
+/// The reporter's own words, sent as the Thread's first user input right after
+/// the folded briefing. A Ticket created from a bare title still needs a turn,
+/// so the title stands in when there is no body.
+pub fn first_message<'a>(body: &'a str, title: &'a str) -> &'a str {
+    let body = body.trim();
+    if body.is_empty() { title.trim() } else { body }
+}
 
 /// The push that starts the resolver side. There is no queue and no schedule:
 /// this text arrives in a fresh Thread the moment a Ticket is submitted, and it
@@ -136,7 +126,6 @@ pub struct ResolverBriefing<'a> {
     pub project_description: &'a str,
     pub owner: &'a str,
     pub title: &'a str,
-    pub body: &'a str,
     pub reporter: &'a str,
     pub evidence: &'a str,
     pub api_base: &'a str,
@@ -162,16 +151,13 @@ pub fn resolver_briefing(briefing: &ResolverBriefing<'_>) -> String {
 
 你是工单 #{number} 的「修复 Agent」，代表项目所有者 {owner} 处理这张工单。
 **这条消息就是派单**：不需要轮询、不需要读队列，工单已经在你手上。
+报障人的原话是这条 Thread 的第一条用户消息（紧接着这条上下文），现象从那里读。
 
 ## 工单
 {project_block}
 - 标题：{title}
 - 报障人：{reporter}
 - 页面：{ticket_url}
-- 现象：
----
-{body}
----
 
 ## 现场证据（报障 Agent 在报障人机器上查到）
 ---
@@ -218,7 +204,6 @@ jq -n --rawfile r /tmp/resolution.md '{{resolution:$r}}' \
         project_block = project_block,
         title = briefing.title,
         reporter = briefing.reporter,
-        body = briefing.body.trim(),
         evidence = if evidence.is_empty() {
             "（报障 Agent 没有写回证据，直接从现象开始。）"
         } else {

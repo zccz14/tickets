@@ -811,7 +811,6 @@ pub async fn ensure_reporter_thread(state: &AppState, ticket_id: &str) -> AppRes
         project_name: &project.name,
         project_description: &project.description,
         title: &ticket.title,
-        body: &ticket.body,
         reporter: &reporter,
         draft: ticket.status == "draft",
         api_base: &state.public_base_url,
@@ -836,13 +835,17 @@ pub async fn ensure_reporter_thread(state: &AppState, ticket_id: &str) -> AppRes
     }
     if let Err(error) = state
         .cybion
-        .post_input(&key, &thread.id, crate::prompt::REPORTER_OPENING)
+        .post_input(
+            &key,
+            &thread.id,
+            crate::prompt::first_message(&ticket.body, &ticket.title),
+        )
         .await
     {
         set_reporter_error(
             state,
             ticket_id,
-            Some(&format!("Thread 已创建，但开场消息发送失败：{error}")),
+            Some(&format!("Thread 已创建，但首条用户消息发送失败：{error}")),
         )
         .await?;
     }
@@ -965,7 +968,6 @@ pub async fn dispatch_resolver(state: &AppState, ticket_id: &str) -> AppResult<(
         project_description: &project.description,
         owner: &owner,
         title: &ticket.title,
-        body: &ticket.body,
         reporter: &reporter,
         evidence: ticket.evidence.as_deref().unwrap_or_default(),
         api_base: &state.public_base_url,
@@ -990,7 +992,11 @@ pub async fn dispatch_resolver(state: &AppState, ticket_id: &str) -> AppResult<(
     }
     match state
         .cybion
-        .post_input(&key, &thread_id, crate::prompt::RESOLVER_OPENING)
+        .post_input(
+            &key,
+            &thread_id,
+            crate::prompt::first_message(&ticket.body, &ticket.title),
+        )
         .await
     {
         Ok(()) => {
@@ -1001,7 +1007,9 @@ pub async fn dispatch_resolver(state: &AppState, ticket_id: &str) -> AppResult<(
             set_resolver_error(
                 state,
                 ticket_id,
-                Some(&format!("修复 Thread 已就绪，但开场消息发送失败：{error}")),
+                Some(&format!(
+                    "修复 Thread 已就绪，但首条用户消息发送失败：{error}"
+                )),
             )
             .await?;
             Err(AppError::unavailable(error))
