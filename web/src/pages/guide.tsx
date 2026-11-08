@@ -90,8 +90,9 @@ export function GuidePage() {
           </table>
         </div>
         <CodeBlock
-          code={`curl -sS https://tickets.ntnl.io/api/agent/tickets/<id> \\
-  -H "Authorization: Bearer tk_..."`}
+          code={`# 先在 Cybion 里调用 create_thread_token，把返回的 token 填进 $THREAD_TOKEN
+curl -sS https://tickets.ntnl.io/api/agent/tickets/<id> \\
+  -H "Authorization: Bearer $THREAD_TOKEN"`}
         />
         <p className="text-xs text-muted-foreground">{t("guideTokenNote")}</p>
       </section>

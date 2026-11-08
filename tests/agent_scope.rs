@@ -26,16 +26,26 @@ async fn ticket_with_both_tokens(
         .post(&format!("/api/tickets/{id}/submit"), None)
         .await;
     assert_eq!(status, StatusCode::OK);
-    owner
+    let ticket = owner
         .wait_for_ticket(&id, "两侧 Thread 都应建好", |ticket| {
             ticket["reporter_thread"]["thread_id"].is_string()
                 && ticket["resolver_thread"]["thread_id"].is_string()
         })
         .await;
     let _ = env;
-    let reporter_token = extract_agent_token(&env.mock.reporter_briefing(&id));
-    let resolver_token = extract_agent_token(&env.mock.resolver_briefing(&id));
-    (id, reporter_token, resolver_token)
+    let reporter_thread = ticket["reporter_thread"]["thread_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let resolver_thread = ticket["resolver_thread"]["thread_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    (
+        id,
+        thread_token(&reporter_thread),
+        thread_token(&resolver_thread),
+    )
 }
 
 #[tokio::test]
@@ -171,10 +181,10 @@ async fn agent_routes_reject_anything_but_a_live_agent_token() {
     assert_eq!(error_message(&body), "缺少访问令牌");
 
     let (status, body) = user
-        .call_with(Some("tk_deadbeef"), "GET", "/api/agent/whoami", None)
+        .call_with(Some("not-a-thread-token"), "GET", "/api/agent/whoami", None)
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
-    assert!(error_message(&body).contains("Agent 令牌无效"));
+    assert!(error_message(&body).contains("格式不正确"));
 
     // A browser-style token is not an agent token, even if it is well formed.
     let (status, body) = user
@@ -186,5 +196,27 @@ async fn agent_routes_reject_anything_but_a_live_agent_token() {
         )
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
-    assert_eq!(error_message(&body), "无效的 Agent 令牌");
+    assert_eq!(error_message(&body), "Agent 令牌的签名算法不受支持");
+}
+
+#[tokio::test]
+async fn an_expired_thread_token_is_rejected() {
+    let env = Env::new().await;
+    let owner = env.app("owner").await;
+    let reporter = env.app("reporter").await;
+    owner.connect_cybion().await;
+    let project = owner.create_project("支付网关").await;
+    let (id, _, _) = ticket_with_both_tokens(&env, &owner, &reporter, &project, "回调超时").await;
+    let reporter_thread = env.reporter_thread(&id).await;
+
+    let (status, body) = reporter
+        .call_with(
+            Some(&expired_thread_token(&reporter_thread)),
+            "GET",
+            "/api/agent/whoami",
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert!(error_message(&body).contains("已过期"), "{body}");
 }

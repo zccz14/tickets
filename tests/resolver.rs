@@ -148,7 +148,7 @@ async fn reopening_and_new_evidence_push_the_same_thread_again() {
 
     // The reporter Agent finds something new on an open ticket: the resolver is
     // told, without opening a second Thread.
-    let token = extract_agent_token(&env.mock.reporter_briefing(&id));
+    let token = thread_token(&env.reporter_thread(&id).await);
     let (status, body) = reporter
         .evidence(&token, &id, "### 关键证据\n上游 30s 超时")
         .await;
@@ -200,7 +200,7 @@ async fn the_resolver_agent_resolves_and_closes_in_one_call() {
             ticket["resolver_thread"]["thread_id"].is_string()
         })
         .await;
-    let token = extract_agent_token(&env.mock.resolver_briefing(&id));
+    let token = thread_token(&env.resolver_thread(&id).await);
 
     let (status, who) = owner
         .call_with(Some(&token), "GET", "/api/agent/whoami", None)

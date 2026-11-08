@@ -1,14 +1,14 @@
 # Tickets 技术设计
 
-**结论：一个 Rust 单二进制同时提供 API 与前端，SQLite 存全部状态；身份来自 Auth Mini，Agent 身份来自两种只绑定一张工单的 `tk_` 令牌；两侧都靠推送驱动——报障人自己的 Key 建调查 Thread，项目所有者的 Key 在提交时建修复 Thread，没有队列、没有轮询、没有定时任务。**
+**结论：一个 Rust 单二进制同时提供 API 与前端，SQLite 存全部状态；身份来自 Auth Mini，Agent 身份来自 Cybion 为那条 Thread 签发的 60 秒 JWT，Tickets 用它核对「这就是我为这张工单开的那条 Thread」；两侧都靠推送驱动——报障人自己的 Key 建调查 Thread，项目所有者的 Key 在提交时建修复 Thread，没有队列、没有轮询、没有定时任务。**
 
 ## 架构
 
 ```mermaid
 flowchart TB
     B[浏览器<br/>React + Auth Mini] -->|Bearer JWT| A[Axum]
-    P[报障 Agent<br/>在报障人机器上] -->|Bearer tk_ Reporter| A
-    R[修复 Agent<br/>在所有者机器上] -->|Bearer tk_ Resolver| A
+    P[报障 Agent<br/>在报障人机器上] -->|Bearer Thread JWT| A
+    R[修复 Agent<br/>在所有者机器上] -->|Bearer Thread JWT| A
     A --> D[(SQLite WAL)]
     A -->|报障人的 Key| C[Cybion /v1/threads]
     A -->|所有者的 Key| C
@@ -22,7 +22,7 @@ flowchart TB
 | --- | --- | --- |
 | `/api/health`、`/api/meta` | 无 | 公开 |
 | `/api/*` 其余浏览器路由 | `require_user` | Auth Mini JWT，或 `--dev-user` |
-| `/api/agent/*` | `require_agent` | `tk_` 令牌 → 绑定的那张工单 |
+| `/api/agent/*` | `require_agent` | Cybion 签的 Thread JWT → `sub` 查回绑定的那张工单 |
 | 其他路径 | `web::static_handler` | 内嵌前端，未知路径回落到 `index.html` |
 
 ## 技术选型
@@ -58,7 +58,7 @@ erDiagram
 三个实现细节：
 
 1. **编号是事务内自增的**。创建工单时先 `UPDATE projects SET ticket_counter=ticket_counter+1 … RETURNING ticket_counter`，再插入工单，两步在同一个事务里；`UNIQUE(project_id, number)` 是兜底。
-2. **一张工单最多两张 Thread**，每张各有自己的 owner、一次性令牌（只存哈希）与错误字段：`reporter_thread_*` 与 `resolver_thread_*`。两侧令牌都只绑定这张工单，授权就是一次相等比较。
+2. **一张工单最多两张 Thread**，每张各有自己的 owner 与错误字段：`reporter_thread_*` 与 `resolver_thread_*`。库里存的是 Thread id 本身，没有令牌；Agent 带着的 JWT 只用来回答「我是哪条 Thread」，授权仍然是拿这个 id 在自己那张表里查一次。
 3. **索引围绕三个查询**：项目内状态列表（`project_id, status, updated_at DESC`）、我的工单（`reporter_user_id, updated_at DESC`）、授权成员（`project_grants.user_id`）。
 
 数据库连接：WAL、`synchronous=NORMAL`、`foreign_keys=ON`、`busy_timeout=10s`、连接池 8。
@@ -68,7 +68,8 @@ erDiagram
 `CREATE TABLE IF NOT EXISTS` 不会改已有表，因此 `db::migrate` 逐列补齐，并主动清掉已经不属于这个模型的列与表：
 
 - 新增：`tickets.evidence / evidence_at / resolution / resolution_at / resolver_thread_* / resolver_dispatched_at`；
-- 删除：`comments` 表（评论时间线）、`tickets.last_reporter_at / last_resolver_at`（队列水位）、`projects.resolver_key_hash / resolver_key_hint / resolver_key_created_at / resolver_thread_url / resolver_machine_id`（项目级修复密钥与终极机器）。
+- 删除：`comments` 表（评论时间线）、`tickets.last_reporter_at / last_resolver_at`（队列水位）、`tickets.reporter_agent_token_hash / reporter_agent_token_hint / resolver_agent_token_hash / resolver_agent_token_hint`（Tickets 自己签发的 Agent 令牌）、`projects.resolver_key_hash / resolver_key_hint / resolver_key_created_at / resolver_thread_url / resolver_machine_id`（项目级修复密钥与终极机器）。
+- 新增索引：`tickets(reporter_thread_id)`、`tickets(resolver_thread_id)` —— Agent 每次调用只带一个 Thread id，这是它的查找路径。
 
 删列前先 `DROP INDEX IF EXISTS idx_tickets_resolver`，因为它在被删的列上。删掉的内容描述的是一个已经不存在的工作方式，留着只会让代码与库各说各话。
 
@@ -82,16 +83,23 @@ erDiagram
 
 ### Agent 令牌
 
-```
-tk_ + 24 字节随机数的 hex（共 51 字符）
+Agent 不持有 Tickets 签发的任何东西。它调用 Cybion 的 `create_thread_token` 工具，拿到一张 60 秒有效的 JWT：
+
+```json
+{"iss":"https://cybion.ntnl.io","sub":"<Thread id>","iat":…,"exp":…}
 ```
 
-服务端只存 `SHA-256` 与一个 12 字符的提示，因此拖库不能伪造 Agent 调用。`require_agent` 先在 `tickets.reporter_agent_token_hash` 里找，再在 `tickets.resolver_agent_token_hash` 里找，两个作用域都只带一个 `ticket_id`：
+`require_agent` 用 `thread_token::ThreadTokens` 验签（Ed25519 / EdDSA，公钥取自 Cybion 的 `/.well-known/jwks.json`，按 `kid` 选键、进程内缓存、未知 `kid` 时刷新一次），然后：
+
+- 在 `tickets.reporter_thread_id` 里找 `sub`，命中就是 Reporter；
+- 否则在 `tickets.resolver_thread_id` 里找，命中就是 Resolver。
+
+两条作用域都只带一个 `ticket_id`：
 
 - Reporter：`ticket_id` 必须等于目标工单；只能写 `evidence`。
 - Resolver：同上；只能写 `resolve`（写结论 + 关单），且草稿工单直接 409。
 
-没有项目级作用域，因为没有队列可读。
+没有项目级作用域，因为没有队列可读。令牌一分钟就过期，所以它不会在 Thread 历史里留下任何还有用的东西；`sub` 由 Cybion 从「正在运行的那条 Thread」填入，模型无法指定别的 Thread。
 
 ### 现场调查的实时视图
 

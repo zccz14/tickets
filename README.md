@@ -21,16 +21,16 @@ sequenceDiagram
     R->>T: 新建工单：发送第一条消息（创建草稿）
     T->>C: 创建 Thread + 写简报上下文 + 投正文（第一条用户消息）
     C->>C: 在报障人的机器上只读排查
-    C->>T: 写回「现场证据」（一次性 Reporter 令牌）
+    C->>T: 写回「现场证据」（带 Cybion 现场签发的 Thread 令牌）
     R->>T: 提交工单
     T->>X: 创建修复 Thread + 写派单上下文 + 投正文
     X->>T: 读工单与证据，诊断并修复
-    X->>T: 写回处理结论并关闭（一次调用，Resolver 令牌）
+    X->>T: 写回处理结论并关闭（一次调用，同样的 Thread 令牌）
 ```
 
 一张工单只有三段文字：**正文**（报障人写的现象）、**现场证据**（报障 Agent 在机器上量到的）、**处理结论**（修复 Agent 做完的）。没有评论区。
 
-两侧的权限由两种 `tk_` 开头的 Agent 令牌限定，两者都只绑定自己那张工单：Reporter 只能写证据，Resolver 只能写结论并关单。重新打开工单或报障 Agent 补写了新证据时，Tickets 会往同一张修复 Thread 里再推一条消息——仍然是推送，不是轮询。
+两侧都不持有长期令牌：Agent 在写回前调用 Cybion 的 `create_thread_token`，拿一张 60 秒内有效、`sub` 就是它自己那条 Thread 的 JWT；Tickets 用这张 JWT 去核对自己存的那条 Thread id，报障侧只能写证据，修复侧只能写结论并关单。Tickets 自己不签发、也不保存任何 Agent 令牌。重新打开工单或报障 Agent 补写了新证据时，Tickets 会往同一张修复 Thread 里再推一条消息——仍然是推送，不是轮询。
 
 产品语义见 [PRODUCT.md](PRODUCT.md)，实现与部署见 [DESIGN.md](DESIGN.md)。
 
@@ -88,7 +88,7 @@ sqlite3 /tmp/tickets-dev/tickets.db \
 
 ## HTTP API
 
-浏览器接口由 Auth Mini 保护，`Authorization: Bearer <access token>`；Agent 接口由 Agent 令牌保护，`Authorization: Bearer tk_…`。两条路由空间互不相通。
+浏览器接口由 Auth Mini 保护，`Authorization: Bearer <access token>`；Agent 接口由 Cybion 签发的 Thread 令牌保护，`Authorization: Bearer <create_thread_token 返回的 JWT>`，签发方是 `https://cybion.ntnl.io`，公钥在 `/.well-known/jwks.json`。两条路由空间互不相通。
 
 浏览器侧：
 
@@ -109,7 +109,7 @@ sqlite3 /tmp/tickets-dev/tickets.db \
 | GET/POST | `/api/tickets/{id}/thread` | 查看 / 补建现场调查 Thread |
 | GET/POST | `/api/tickets/{id}/thread/live` | 实时读取 Thread 历史（`?after=`）/ 报障人直接向 Agent 发消息 |
 
-Agent 侧（两种令牌都只绑定一张工单）：
+Agent 侧（令牌只证明「我是哪条 Thread」，两条 Thread 各绑一张工单）：
 
 | 方法 | 路径 | 作用域 |
 | --- | --- | --- |
