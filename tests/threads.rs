@@ -49,7 +49,7 @@ async fn connecting_cybion_probes_the_key_and_encrypts_it() {
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(error_message(&body).contains("cyb_"));
-    assert!(env.mock.calls_to("/v1/threads").is_empty());
+    assert!(env.mock.calls_to("/api/threads").is_empty());
 
     // A key Cybion rejects is not stored.
     env.mock.fail_read_with(401);
@@ -203,7 +203,7 @@ async fn each_ticket_gets_its_reporters_own_key_and_its_own_thread() {
     // owner's key, so the two sides are told apart by their `external_ref`.)
     let create_for = |ticket: &str| {
         env.mock
-            .calls_to("/v1/threads")
+            .calls_to("/api/threads")
             .into_iter()
             .find(|call| {
                 call.body["external_ref"]
@@ -299,7 +299,7 @@ async fn only_the_reporter_sees_the_thread_link() {
     // The probe used the reporter's own key.
     let probe = env
         .mock
-        .calls_to(&format!("/v1/threads/{thread_id}"))
+        .calls_to(&format!("/api/threads/{thread_id}"))
         .into_iter()
         .last()
         .expect("应当探测过 Thread");
@@ -486,7 +486,7 @@ async fn the_reporter_types_straight_into_the_thread() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["accepted"], true);
-    assert_eq!(env.mock.browser_inputs(), vec!["日志在 /tmp/gateway.log"]);
+    assert_eq!(env.mock.last_input(), "日志在 /tmp/gateway.log");
     let call = env
         .mock
         .calls_to(&format!("/api/threads/{thread_id}/inputs"))
@@ -510,7 +510,7 @@ async fn the_reporter_types_straight_into_the_thread() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 
     // A rejected turn is reported instead of pretending the message landed.
-    env.mock.fail_browser_input_with(500);
+    env.mock.fail_input_with(500);
     let (status, body) = bob
         .call_with(
             Some("dev-browser-token"),

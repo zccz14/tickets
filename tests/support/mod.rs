@@ -46,11 +46,9 @@ pub struct MockState {
     seq: Mutex<u64>,
     history: Mutex<Vec<Value>>,
     response: Mutex<Option<Value>>,
-    browser_input_status: Mutex<u16>,
-    browser_inputs: Mutex<Vec<String>>,
 }
 
-/// An in-process stand-in for Cybion's `/v1/threads` API. It records every call
+/// An in-process stand-in for Cybion's `/api/threads` API. It records every call
 /// so tests can assert what the server sent and with whose key.
 pub struct MockCybion {
     pub base: String,
@@ -107,15 +105,6 @@ impl MockCybion {
         *self.state.response.lock().unwrap() = response;
     }
 
-    pub fn fail_browser_input_with(&self, status: u16) {
-        *self.state.browser_input_status.lock().unwrap() = status;
-    }
-
-    /// Every message the ticket page sent into the Thread, in order.
-    pub fn browser_inputs(&self) -> Vec<String> {
-        self.state.browser_inputs.lock().unwrap().clone()
-    }
-
     /// Every message Tickets pushed into a Thread, oldest first.
     pub fn inputs(&self) -> Vec<String> {
         self.calls()
@@ -169,7 +158,7 @@ async fn create_thread(
 ) -> Response {
     state.calls.lock().unwrap().push(Call {
         method: "POST".to_owned(),
-        path: "/v1/threads".to_owned(),
+        path: "/api/threads".to_owned(),
         bearer: bearer(&headers),
         body: body.clone(),
     });
@@ -214,7 +203,7 @@ async fn post_context(
 ) -> Response {
     state.calls.lock().unwrap().push(Call {
         method: "POST".to_owned(),
-        path: format!("/v1/threads/{id}/context"),
+        path: format!("/api/threads/{id}/context"),
         bearer: bearer(&headers),
         body: body.clone(),
     });
@@ -237,7 +226,7 @@ async fn post_input(
 ) -> Response {
     state.calls.lock().unwrap().push(Call {
         method: "POST".to_owned(),
-        path: format!("/v1/threads/{id}/inputs"),
+        path: format!("/api/threads/{id}/inputs"),
         bearer: bearer(&headers),
         body: body.clone(),
     });
@@ -259,7 +248,7 @@ async fn read_thread(
 ) -> Response {
     state.calls.lock().unwrap().push(Call {
         method: "GET".to_owned(),
-        path: format!("/v1/threads/{id}"),
+        path: format!("/api/threads/{id}"),
         bearer: bearer(&headers),
         body: Value::Null,
     });
@@ -317,13 +306,12 @@ pub const MOCK_API_KEY: &str = "cyb_mock_user_0123456789";
 pub async fn start_mock_cybion() -> MockCybion {
     let state = Arc::new(MockState::default());
     let app = Router::new()
-        .route("/v1/threads", post(create_thread))
-        .route("/v1/threads/{id}/context", post(post_context))
-        .route("/v1/threads/{id}/inputs", post(post_input))
-        .route("/v1/threads/{id}", get(read_thread))
+        .route("/api/threads", post(create_thread))
+        .route("/api/threads/{id}/context", post(post_context))
+        .route("/api/threads/{id}/inputs", post(post_input))
+        .route("/api/threads/{id}", get(read_thread))
         .route("/api/threads/{id}/history", get(browser_history))
         .route("/api/threads/{id}/response", get(browser_response))
-        .route("/api/threads/{id}/inputs", post(browser_input))
         .route("/api/api-keys", post(create_api_key))
         .route("/api/api-keys/{id}", delete(delete_api_key))
         .with_state(state.clone());
@@ -699,32 +687,6 @@ async fn browser_response(
         None => Value::Null,
     })
     .into_response()
-}
-
-async fn browser_input(
-    State(state): State<Arc<MockState>>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> Response {
-    state.calls.lock().unwrap().push(Call {
-        method: "POST".to_owned(),
-        path: format!("/api/threads/{id}/inputs"),
-        bearer: bearer(&headers),
-        body: body.clone(),
-    });
-    let status = *state.browser_input_status.lock().unwrap();
-    if status != 0 {
-        return (
-            StatusCode::from_u16(status).unwrap(),
-            Json(json!({ "error": "mock browser input failure" })),
-        )
-            .into_response();
-    }
-    if let Some(input) = body["input"].as_str() {
-        state.browser_inputs.lock().unwrap().push(input.to_owned());
-    }
-    Json(json!({ "id": 1 })).into_response()
 }
 
 async fn create_api_key(

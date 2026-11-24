@@ -10,7 +10,7 @@ flowchart TB
     P[报障 Agent<br/>在报障人机器上] -->|Bearer Thread JWT| A
     R[修复 Agent<br/>在所有者机器上] -->|Bearer Thread JWT| A
     A --> D[(SQLite WAL)]
-    A -->|报障人的 Key| C[Cybion /v1/threads]
+    A -->|报障人的 Key| C[Cybion /api/threads]
     A -->|所有者的 Key| C
     A -->|内嵌静态资源| B
     K[secret.key 0600] --- A
@@ -112,7 +112,7 @@ Agent 不持有 Tickets 签发的任何东西。它调用 Cybion 的 `create_thr
 
 - **身份**：Tickets 不透传自己的服务身份，而是把这次浏览器请求的 Auth Mini 访问令牌原样转给 Cybion；Thread 的 owner 是报障人，所以只有报障人的令牌读得到。项目所有者访问 live 接口得到 403。
 - **增量**：前端保存已见记录的最大 `id`，下一次只取更大的记录；进行中的回复单独读 `/response`。
-- **上下文注入**：简报与派单文本走 `POST /v1/threads/{id}/context`，Cybion 存成 activity 记录、回放为 developer 消息，对话里默认折叠；随后把正文作为第一条 input 投进去，推理由它启动；推进会话仍是 input，因为它必须唤醒下一轮。
+- **上下文注入**：简报与派单文本走 `POST /api/threads/{id}/context`，Cybion 存成 activity 记录、回放为 developer 消息，对话里默认折叠；随后把正文作为第一条 input 投进去，推理由它启动；推进会话仍是 input，因为它必须唤醒下一轮。
 - **草稿**：`live` 首次读取时若工单是草稿且没有 Thread、也没有历史错误，会调用 `ensure_reporter_thread`，把「打开草稿」变成「开始调查」；失败会记录错误，因此不会在轮询里反复重试。
 
 ### 项目可见性
@@ -137,7 +137,7 @@ flowchart LR
 
 ## Cybion 集成
 
-Cybion 的 `/v1/threads` 按 API Key 的 owner 隔离，服务端拿一把公共 Key 建出来的 Thread 属于服务端而不是用户，用户既看不到也跑不了。因此两侧各用各的 Key：
+Cybion 的 `/api/threads` 按 API Key 的 owner 隔离，服务端拿一把公共 Key 建出来的 Thread 属于服务端而不是用户，用户既看不到也跑不了。因此两侧各用各的 Key：
 
 - 每个用户存一把自己的 Key（加密），Key 由服务端用用户的 Auth Mini 令牌调 Cybion `POST /api/api-keys` 铸出，界面不要求粘贴；
 - 建 Thread 时用**Thread 主人的 Key**：调查 Thread 用报障人的，修复 Thread 用项目所有者的；
@@ -147,11 +147,11 @@ Cybion 的 `/v1/threads` 按 API Key 的 owner 隔离，服务端拿一把公共
 
 | 调用 | 路径 | 用途 |
 | --- | --- | --- |
-| `create_thread` | `POST /v1/threads` | 建 Thread，带 `title` 与 `external_ref` |
-| `append_context` | `POST /v1/threads/{id}/context` | 写入折叠简报：activity 记录、回放为 developer 消息，不触发推理 |
-| `post_input` | `POST /v1/threads/{id}/inputs` | 投正文（第一条用户消息）/ 推进消息，触发推理 |
-| `read_thread` | `GET /v1/threads/{id}` | 实时读状态与上下文用量 |
-| `probe_key` | `GET /v1/threads/000…0` | 连接账号时验证 Key：401 才算无效 |
+| `create_thread` | `POST /api/threads` | 建 Thread，带 `title` 与 `external_ref` |
+| `append_context` | `POST /api/threads/{id}/context` | 写入折叠简报：activity 记录、回放为 developer 消息，不触发推理 |
+| `post_input` | `POST /api/threads/{id}/inputs` | 投正文（第一条用户消息）/ 推进消息，触发推理 |
+| `read_thread` | `GET /api/threads/{id}` | 实时读状态与上下文用量 |
+| `probe_key` | `GET /api/threads/000…0` | 连接账号时验证 Key：401 才算无效 |
 
 浏览器 API 复用同一枚令牌：前端把 `cybion.ntnl.io` 加进 Auth Mini 的 `audiences`，服务端验完自己的受众后把原始 Bearer 转发给 Cybion，代表这个人执行操作。
 
@@ -177,7 +177,7 @@ Cybion 的 `/v1/threads` 按 API Key 的 owner 隔离，服务端拿一把公共
 
 | 旧 | 现在 |
 | --- | --- |
-| 终极机器每 120 秒执行检查命令 | 提交时一次 `POST /v1/threads` + `POST …/context` + `POST …/inputs` |
+| 终极机器每 120 秒执行检查命令 | 提交时一次 `POST /api/threads` + `POST …/context` + `POST …/inputs` |
 | `GET /api/agent/queue` 返回待处理工单 | 没有队列接口 |
 | 项目级修复密钥 + 机器命令里内嵌令牌 | 单张工单的 Resolver 令牌，只出现在那张 Thread 的简报里 |
 | 项目设置里选 Worker、暂停、立即运行、断开 | 只需所有者连接 Cybion；设备由修复 Thread 自己用 `cybion_list_workers` 挑 |
