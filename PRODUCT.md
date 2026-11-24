@@ -60,7 +60,7 @@ stateDiagram-v2
 ### 连接与建 Thread
 
 1. 报障人点一次「连接 Cybion」即可。浏览器把 Auth Mini 令牌的受众扩到 `cybion.ntnl.io`，服务端拿这枚令牌调 `POST /api/api-keys` 铸一把 `cyb_…` Key，再用 AES-256-GCM 加密存库；`secret.key` 与数据库分开存放、权限 0600。界面不要求粘贴任何密钥。
-2. 建立 Thread 时，服务端用**报障人自己的 Key** 调 `POST /v1/threads`，标题形如 `[#12] 充值回调偶发超时`，`external_ref` 指向工单页面。Cybion 按 Key 的 owner 隔离，所以这一步不能用一把公共服务端 Key 代办。
+2. 建立 Thread 时，服务端用**报障人自己的 Key** 调 `POST /api/threads`，标题形如 `[#12] 充值回调偶发超时`，`external_ref` 指向工单页面。Cybion 按 Key 的 owner 隔离，所以这一步不能用一把公共服务端 Key 代办。
 3. Thread 创建成功后，服务端生成一次性 Reporter 令牌，把简报写进 Thread 的上下文（Cybion 的 `context` 接口：存成 activity、回放为 developer 消息，对话里折叠），再把正文作为第一条用户消息投进去，调查由这条消息启动。简报包含：项目名称与项目描述、标题与报障人、调查方向（环境 / 位置 / 现象 / 复现 / 时间线 / 边界）、硬约束（只读、脱敏、结论要有证据、最多问 3 个问题），以及**写回证据的完整 curl 命令**。
 4. 报障 Agent 用这条令牌 `POST /api/agent/tickets/{id}/evidence` 写回四段式报告。工单进入 `open` 之后补写证据，会顺带把新证据推进修复 Thread。
 5. Thread 创建、简报写入或首条消息失败不会阻塞工单提交：错误记在工单上，报障人可以在工单页重试补建。简报没写进上下文时不会投正文，避免 Agent 在没有工单信息的情况下开跑。
@@ -76,7 +76,7 @@ stateDiagram-v2
 ## 修复侧协议：提交即派单
 
 1. 唯一的准备动作是**项目所有者连接自己的 Cybion**。选中 Worker、配置检查间隔、写意图这些都不存在：修复 Thread 跑在所有者账号的机器上，由 Cybion 自己决定用哪台设备。
-2. 报障人提交时，服务端用**所有者的 Key** 调 `POST /v1/threads`（标题与 `external_ref` 同工单），接着把派单简报写进上下文、再把正文作为第一条用户消息投进去启动修复。简报包含：
+2. 报障人提交时，服务端用**所有者的 Key** 调 `POST /api/threads`（标题与 `external_ref` 同工单），接着把派单简报写进上下文、再把正文作为第一条用户消息投进去启动修复。简报包含：
    - 工单（项目、标题、报障人、页面链接、现象全文）与现场证据全文；
    - 设备指引：先 `cybion_list_workers` 挑一台在线的设备，之后所有 bash / 文件工具都带那台设备的 `worker_id`——**设备选择不需要问人**；
    - 结论接口的完整 curl 命令与一次性 Resolver 令牌；

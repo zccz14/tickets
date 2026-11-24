@@ -45,7 +45,7 @@ async fn submitting_pushes_the_ticket_to_the_owners_resolver_thread() {
     );
 
     // The Thread belongs to the project owner, created with their own key.
-    let created = env.mock.calls_to("/v1/threads");
+    let created = env.mock.calls_to("/api/threads");
     assert_eq!(created.len(), 1, "一次提交只应开一个修复 Thread");
     assert_eq!(created[0].bearer.as_deref(), Some(MOCK_API_KEY));
 
@@ -107,7 +107,7 @@ async fn a_submit_without_the_owners_cybion_records_why_and_retries_later() {
         "{stuck}"
     );
     assert!(stuck["resolver_thread"]["thread_id"].is_null());
-    assert!(env.mock.calls_to("/v1/threads").is_empty());
+    assert!(env.mock.calls_to("/api/threads").is_empty());
 
     // Only the project owner may retry, and only once Cybion is connected.
     let (status, body) = reporter
@@ -144,7 +144,7 @@ async fn reopening_and_new_evidence_push_the_same_thread_again() {
             ticket["resolver_thread"]["thread_id"].is_string()
         })
         .await;
-    let threads_after_submit = env.mock.calls_to("/v1/threads").len();
+    let threads_after_submit = env.mock.calls_to("/api/threads").len();
 
     // The reporter Agent finds something new on an open ticket: the resolver is
     // told, without opening a second Thread.
@@ -169,7 +169,7 @@ async fn reopening_and_new_evidence_push_the_same_thread_again() {
     assert_eq!(status, StatusCode::OK, "{reopened}");
     assert_eq!(reopened["status"], "open");
     assert_eq!(
-        env.mock.calls_to("/v1/threads").len(),
+        env.mock.calls_to("/api/threads").len(),
         threads_after_submit,
         "重开不应新建 Thread"
     );
@@ -276,7 +276,7 @@ async fn a_draft_is_never_pushed_and_cannot_be_dispatched() {
         env.mock.try_resolver_briefing(&id).is_none(),
         "草稿不该被派发"
     );
-    assert_eq!(env.mock.calls_to("/v1/threads").len(), 1);
+    assert_eq!(env.mock.calls_to("/api/threads").len(), 1);
 }
 
 #[tokio::test]
@@ -295,14 +295,14 @@ async fn dispatch_is_owner_only_and_refuses_closed_tickets() {
             ticket["resolver_thread"]["thread_id"].is_string()
         })
         .await;
-    let before = env.mock.calls_to("/v1/threads").len();
+    let before = env.mock.calls_to("/api/threads").len();
 
     // Dispatching an already-dispatched ticket changes nothing.
     let (status, _) = owner
         .post(&format!("/api/tickets/{id}/dispatch"), None)
         .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(env.mock.calls_to("/v1/threads").len(), before);
+    assert_eq!(env.mock.calls_to("/api/threads").len(), before);
 
     let (status, closed) = owner.post(&format!("/api/tickets/{id}/close"), None).await;
     assert_eq!(status, StatusCode::OK, "{closed}");

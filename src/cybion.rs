@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-/// A thin client for the Cybion integration API (`/v1/threads`).
+/// A thin client for the Cybion console API (`/api/threads`).
 ///
 /// Every call carries the end user's own API key: the Thread it creates belongs
 /// to that user, runs on that user's Worker, and stays readable only to them.
@@ -187,7 +187,7 @@ impl CybionClient {
         let response = self
             .http
             .get(format!(
-                "{}/v1/threads/00000000-0000-0000-0000-000000000000",
+                "{}/api/threads/00000000-0000-0000-0000-000000000000",
                 self.base
             ))
             .bearer_auth(key)
@@ -209,7 +209,7 @@ impl CybionClient {
     ) -> Result<ThreadInfo, String> {
         let body = json!({ "title": title, "external_ref": external_ref });
         let value = self
-            .send(reqwest::Method::POST, "/v1/threads", key, Some(body))
+            .send(reqwest::Method::POST, "/api/threads", key, Some(body))
             .await?;
         serde_json::from_value(value).map_err(|error| format!("Cybion 线程响应无法解析: {error}"))
     }
@@ -226,7 +226,7 @@ impl CybionClient {
         let body = json!({ "content": content });
         self.send(
             reqwest::Method::POST,
-            &format!("/v1/threads/{thread_id}/context"),
+            &format!("/api/threads/{thread_id}/context"),
             key,
             Some(body),
         )
@@ -238,7 +238,7 @@ impl CybionClient {
         let body = json!({ "input": input });
         self.send(
             reqwest::Method::POST,
-            &format!("/v1/threads/{thread_id}/inputs"),
+            &format!("/api/threads/{thread_id}/inputs"),
             key,
             Some(body),
         )
@@ -250,7 +250,7 @@ impl CybionClient {
         let value = self
             .send(
                 reqwest::Method::GET,
-                &format!("/v1/threads/{thread_id}"),
+                &format!("/api/threads/{thread_id}"),
                 key,
                 None,
             )
@@ -294,10 +294,9 @@ pub struct WorkerInfo {
 }
 
 impl CybionClient {
-    /// Calls Cybion's browser API with the end user's Auth Mini token. These
-    /// endpoints are not part of the `cyb_` integration API: they act for the
-    /// signed-in person, which is exactly why the token is forwarded instead of
-    /// a shared server key.
+    /// Calls Cybion with the end user's Auth Mini token rather than an API key.
+    /// Both reach the same routes; the token acts for the signed-in person,
+    /// which is exactly why it is forwarded instead of a shared server key.
     async fn browser_call(
         &self,
         method: reqwest::Method,
